@@ -3,11 +3,15 @@
 # Description
 
 This project is a Rust implementation of the [Gene project](https://github.com/0xrawsec/gene) initially 
-written in Go. This re-implementation was also the occasion to completely rework the rule format, to
+written in Go. The main objective of this project is to embed a security event scanning engine to
+[Kunai](https://github.com/0xrawsec/kunai). Even though it has been built for a specific use case,
+the code in this library is completely re-usable for other log scanning purposes.
+
+This re-implementation was also the occasion to completely rework the rule format, to
 make it simpler, better structured and easier to write. It is now using the [YAML](https://yaml.org/) document 
 format to encode rule information.
 
-```yaml,title=Rule Example
+```yaml
 name: mimic.kthread
 meta:
     tags: [ 'os:linux' ]
@@ -28,10 +32,6 @@ matches:
 condition: not $task_is_kthread and $kthread_names
 severity: 10
 ```
-
-# Objectives
-
-The main objective of this project is to embed a security event scanning engine to [Kunai](https://github.com/0xrawsec/kunai).
 
 # Benchmarks
 
