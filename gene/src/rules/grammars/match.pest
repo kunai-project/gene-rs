@@ -1,0 +1,26 @@
+sep             = _{ "." }
+segment         =  { (ASCII_ALPHANUMERIC | "_" | "-")+ }
+segment_with_ws =  { (ASCII_ALPHANUMERIC | WHITESPACE | "." | "_" | "-")+ }
+field_path      = ${ sep ~ ("\"" ~ segment_with_ws ~ "\"" | segment) ~ field_path* }
+
+value_dq = _{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+value_sq = _{ "'" ~ (!("'") ~ ANY)* ~ "'" }
+value    = @{ (value_dq | value_sq | "none") }
+
+// the order in which operators are evaluated is important
+op   = _{ eq | lte | lt | gte | gt | rex | flag }
+eq   =  { "=" }
+lt   =  { "<" }
+lte  =  { "<=" }
+gt   =  { ">" }
+gte  =  { ">=" }
+rex  =  { "~=" }
+flag =  { "&=" }
+
+direct_match = { SOI ~ "\""? ~ field_path ~ "\""? ~ op ~ value ~ EOI }
+
+at                  = _{ "@" }
+indirect_field_path = @{ at ~ field_path }
+indirect_match      =  { SOI ~ field_path ~ eq ~ indirect_field_path ~ EOI }
+
+WHITESPACE = _{ " " }

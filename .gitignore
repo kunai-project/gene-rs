@@ -1,0 +1,20 @@
+# Generated files
+/target/
+
+# Cargo.lock file is automatically created and should not be committed
+Cargo.lock
+
+# .rustc_info directory is automatically created and should not be committed
+.rustc_info/
+
+# .idea directory for JetBrains IntelliJ IDEA (if you're using this IDE)
+.idea/
+
+# Visual Studio Code settings
+.vscode/
+
+# Mac OS
+.DS_Store
+
+# Windows
+Thumbs.db

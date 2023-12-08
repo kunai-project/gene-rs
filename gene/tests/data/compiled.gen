@@ -1,0 +1,2884 @@
+---
+name: AddUser
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $net: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sys(tem32|wow64)\\net1?\.exe)'
+  $command: .Event.EventData.CommandLine ~= 'user.*/ADD'
+condition: $net and $command
+severity: 10
+actions: null
+meta:
+  tags:
+    - ''
+...
+
+---
+name: AlternateExplicitCredentialUse
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4648
+matches:
+  $iplh1: .Event.EventData.IpAddress = '-'
+  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
+  $iplh3: .Event.EventData.IpAddress = '::1'
+  $wlpn: .Event.EventData.ProcessName ~= 'C:\\Windows\\System32\\winlogon\.exe'
+  $wltsn: .Event.EventData.TargetServerName = 'localhost'
+condition: '!$iplh1 and !$iplh2 and !$iplh3 and !$wlpn and !$wltsn'
+severity: 4
+actions: null
+meta:
+  tags:
+    - Lateral
+    - Security
+...
+
+---
+name: AnonymousNetworkLogon
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4624
+matches:
+  $logt: .Event.EventData.LogonType = '3'
+  $kerb: .Event.EventData.AuthenticationPackageName = 'Kerberos'
+  $user: .Event.EventData.TargetUserName = 'ANONYMOUS LOGON'
+  $iplh1: .Event.EventData.IpAddress = '-'
+  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
+condition: $logt and !$kerb and $user and !$iplh1 and !$iplh2
+severity: 5
+actions: null
+meta:
+  tags:
+    - Lateral
+    - Security
+...
+
+---
+name: AutomatedRecursiveDir
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $parent: .Event.EventData.ParentImage ~= '(?i:C:\\windows\\explorer.exe)'
+  $exe: .Event.EventData.Image ~= '(?i:\\cmd.exe$)'
+  $cmd: .Event.EventData.CommandLine ~= '(?i:dir.*?/s)'
+condition: '!$parent and $exe and $cmd'
+severity: 5
+actions: null
+meta:
+  tags:
+    - Cmd
+...
+
+---
+name: BlacklistedDomain
+params:
+  filter: false
+  disable: true
+match-on:
+  events:
+    Microsoft-Windows-DNS-Client/Operational: []
+matches:
+  $domainBL: extract('(?P<dom>\w+\.\w+$)',QueryName) in blacklist'
+  $subdomainBL: extract('(?P<sub>\w+\.\w+\.\w+$)',QueryName) in blacklist'
+  $subsubdomainBL: extract('(?P<subsub>\w+\.\w+\.\w+\.\w+$)',QueryName) in blacklist'
+condition: $domainBL or $subdomainBL or $subsubdomainBL
+severity: 10
+actions: null
+meta:
+  tags:
+    - DNS
+...
+
+---
+name: BlacklistedHash
+params:
+  filter: false
+  disable: true
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+      - 6
+      - 7
+matches:
+  $md5: extract('MD5=(?P<md5>[A-F0-9]{32})', Hashes) in blacklist
+  $sha1: extract('SHA1=(?P<sha1>[A-F0-9]{40})', Hashes) in blacklist
+  $sha256: extract('SHA256=(?P<sha256>[A-F0-9]{64})', Hashes) in blacklist
+condition: $md5 or $sha1 or $sha256
+severity: 10
+actions: null
+meta:
+  tags:
+    - Blacklist
+...
+
+---
+name: BlacklistedImphash
+params:
+  filter: false
+  disable: true
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+      - 6
+      - 7
+matches:
+  $imphash: extract('IMPHASH=(?P<imphash>[A-F0-9]{32})', Hashes) in blacklist
+condition: $imphash
+severity: 8
+actions: null
+meta:
+  tags:
+    - Blacklist
+...
+
+---
+name: BrowserChild
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $browser: .Event.EventData.ParentImage ~= '(?i:\\(iexplore|firefox|chrome|MicrosoftEdge|opera|vivaldi)\.exe)$'
+condition: $browser
+severity: 0
+actions: null
+meta:
+  tags:
+    - Browser
+...
+
+---
+name: BrowserSuspiciousChild
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $browser: .Event.EventData.ParentImage ~= '(?i:\\(iexplore|firefox|chrome|MicrosoftEdge|opera|vivaldi)\.exe)$'
+  $susp: .Event.EventData.Image ~= '(?i:\\(certutil|rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm)\.exe)$'
+  $allowed: .Event.EventData.CommandLine ~= '(?i:rundll32\.exe.*?(shell32\.dll"{0,1},(OpenAs_RunDLL|SHCreateLocalServerRunDll)|inetcpl\.cpl"{0,1},ClearMyTracksByProcess|ieframe.dll"{0,1},OpenURL))'
+condition: $browser and $susp and !$allowed
+severity: 6
+actions: null
+meta:
+  tags:
+    - Browser
+...
+
+---
+name: CanaryFileRead
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4663
+matches:
+  $access: .Event.EventData.AccessMask &= '0x1'
+  $canary: .Event.EventData.ObjectName ~= '(?i:C:\\PutYourCanaryHere\\)'
+condition: $access and $canary
+severity: 10
+actions: null
+meta:
+  tags:
+    - Canary
+...
+
+---
+name: CertutilDownloader
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1140
+  tags:
+    - Tools
+matches:
+  $certutil: .Event.EventData.Image ~= '(?i:^c:\\windows\\sys(tem32|wow64)\\certutil\.exe$)'
+  $urlcache: '.Event.EventData.CommandLine ~= ''(?i: -urlcache )'''
+  $force: '.Event.EventData.CommandLine ~= ''(?i: -f )'''
+  $split: '.Event.EventData.CommandLine ~= ''(?i: -split )'''
+condition: $certutil and $urlcache and $force and $split
+severity: 7
+actions: null
+...
+
+---
+name: CertutilSuspDecode
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1140
+  tags:
+    - Tools
+matches:
+  $certutil: .Event.EventData.Image ~= '(?i:^c:\\windows\\sys(tem32|wow64)\\certutil\.exe$)'
+  $suspdecode: '.Event.EventData.CommandLine ~= ''(?i: -decode.*((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf))))'''
+condition: $certutil and $suspdecode
+severity: 7
+actions: null
+...
+
+---
+name: Cryptolocker
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+matches:
+  $allowed: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sys(wow64|tem32)\\)'
+  $empty_ext: .Event.EventData.Extension = ''
+  $count_by_ext: .Event.EventData.CountByExt >= '50'
+condition: '!$empty_ext and $count_by_ext'
+severity: 10
+actions:
+  - kill
+  - blacklist
+meta:
+  tags:
+    - WHIDS
+...
+
+---
+name: DefenderActionCriticallyFailed
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Windows Defender/Operational:
+      - 1119
+      - 5008
+severity: 8
+actions: null
+meta:
+  tags:
+    - Defender
+...
+
+---
+name: DefenderBehaviourDetected
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Windows Defender/Operational:
+      - 1015
+severity: 8
+actions: null
+meta:
+  tags:
+    - Defender
+...
+
+---
+name: DefenderConfigChanged
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Windows Defender/Operational:
+      - 5007
+severity: 8
+actions: null
+meta:
+  tags:
+    - Defender
+...
+
+---
+name: DefenderFeatureDisabled
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Windows Defender/Operational:
+      - 5010
+      - 5012
+severity: 10
+actions: null
+meta:
+  tags:
+    - Defender
+...
+
+---
+name: DefenderMalwareDetected
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Windows Defender/Operational:
+      - 1006
+      - 1116
+severity: 10
+actions: null
+meta:
+  tags:
+    - Defender
+...
+
+---
+name: DomainInMisp
+params:
+  filter: false
+  disable: true
+match-on:
+  events:
+    Microsoft-Windows-DNS-Client/Operational: []
+matches:
+  $domainBL: extract('(?P<dom>\w+\.\w+$)',QueryName) in misp'
+  $subdomainBL: extract('(?P<sub>\w+\.\w+\.\w+$)',QueryName) in misp'
+  $subsubdomainBL: extract('(?P<subsub>\w+\.\w+\.\w+\.\w+$)',QueryName) in misp'
+condition: $domainBL or $subdomainBL or $subsubdomainBL
+severity: 10
+actions: null
+meta:
+  tags:
+    - DNS
+...
+
+---
+name: DownloadPath
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $path1: .Event.EventData.CommandLine ~= '(?i:\\Downloads\\)'
+  $path2: .Event.EventData.CommandLine ~= '(?i:appdata\\local\\microsoft\\windows\\temporary
+    internet files\\)'
+condition: $path1 or $path2
+severity: 1
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - Exec
+    - Download
+...
+
+---
+name: DriverLoadedNotValidSig
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 6
+matches:
+  $valid: .Event.EventData.SignatureStatus = 'Valid'
+condition: '!$valid'
+severity: 3
+actions: null
+meta:
+  tags:
+    - DriverLoaded
+    - Signature
+...
+
+---
+name: DriverLoadedSuspiciousSigStatus
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 6
+matches:
+  $valid: .Event.EventData.SignatureStatus = 'Valid'
+  $unavailable: .Event.EventData.SignatureStatus = 'Unavailable'
+condition: '!$valid and !$unavailable'
+severity: 7
+actions: null
+meta:
+  tags:
+    - DriverLoaded
+    - Signature
+...
+
+---
+name: DriverLoadedUnusualPath
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 6
+matches:
+  $uspath1: .Event.EventData.ImageLoaded ~= '(?i:C:\\Windows\\Sys(wow64|tem32))'
+  $uspath2: .Event.EventData.ImageLoaded ~= '(?i:C:\\Windows\\Sys(tem32|wow64)\\drivers)'
+condition: '!$uspath1 and !$uspath2'
+severity: 4
+actions: null
+meta:
+  tags:
+    - DriverLoaded
+...
+
+---
+name: EmbeddedHTTPLinkInCL
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $http: .Event.EventData.CommandLine ~= '(?i:https?://)'
+condition: $http
+severity: 1
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - HTTP
+...
+
+---
+name: EventClearing
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1070
+  tags:
+    - PostExploit
+matches:
+  $im: .Event.EventData.Image ~= '(?i:\\wevtutil\.exe$)'
+  $cmd: '.Event.EventData.CommandLine ~= ''(?i: cl | clear-log )'''
+condition: $im and $cmd
+severity: 8
+actions: null
+...
+
+---
+name: ExecDownloadedDocument
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $path1: .Event.EventData.Image ~= '(?i:appdata\\local\\microsoft\\windows\\temporary
+    internet files\\)'
+  $path2: .Event.EventData.Image ~= '(?i:\\Downloads\\)'
+condition: $path1 or $path2
+severity: 4
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - Exec
+    - Download
+...
+
+---
+name: ExecTimestomping
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 2
+matches:
+  $exec: .Event.EventData.TargetFilename ~= '(?i:((?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf))|(?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))))'
+  $wl1: .Event.EventData.TargetFilename ~= '(?i:^C:\\Users\\.*?\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\CustomDestinations)\\[A-Z0-9]{20}.temp$'
+  $wl2: .Event.EventData.TargetFilename ~= '(?i:.*~tmp$)'
+  $wl3: .Event.EventData.TargetFilename ~= '(?i:C:\\Windows\\SoftwareDistribution\\Download\\)'
+condition: $exec and !($wl1 or $wl2 or $wl3)
+severity: 6
+actions: null
+meta:
+  tags:
+    - Timestomp
+...
+
+---
+name: ExecutableADS
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 15
+meta:
+  attack:
+    - T1096
+  tags:
+    - ADS
+matches:
+  $unk: .Event.EventData.Hash = 'Unknown'
+  $impash: .Event.EventData.Hash ~= '(?i:(IMPHASH=00000000000000000000000000000000))'
+condition: '!($impash or $unk)'
+severity: 10
+actions: null
+...
+
+---
+name: ExecutableFileCreated
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+matches:
+  $system: .Event.EventData.Image ~= '(?i:C:\\Windows)'
+  $defender: .Event.EventData.Image ~= '(?i:((?i:C:\\(PROGRA~(1|2)|Program Files.*?)\\)Windows
+    Defender\\MsMpEng\.exe|(?i:C:\\(PROGRA~3|ProgramData)\\)Microsoft\\Windows Defender\\platform\\.*?\\MpCmdRun\.exe))'
+  $browsers: .Event.EventData.Image ~= '(?i:\\(iexplore|firefox|chrome|MicrosoftEdge|opera|vivaldi)\.exe)'
+  $target: .Event.EventData.TargetFilename ~= '(?i:c:\\.*((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf)))$)'
+condition: '!($system or $browsers or $defender) and $target'
+severity: 7
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - CreateFile
+...
+
+---
+name: ExecutableUnkExt
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+matches:
+  $knownext: .Event.EventData.ImageLoaded ~= '(?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))$'
+condition: '!$knownext'
+severity: 5
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: ExplicitNetworkLogon
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4624
+matches:
+  $logt: .Event.EventData.LogonType = '3'
+  $user: .Event.EventData.TargetUserName = 'ANONYMOUS LOGON'
+  $iplh1: .Event.EventData.IpAddress = '-'
+  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
+  $enddol: .Event.EventData.TargetUserName ~= '\$$'
+condition: $logt and !($user or $iplh1 or $iplh2 or $enddol)
+severity: 5
+actions: null
+meta:
+  tags:
+    - Lateral
+    - Security
+...
+
+---
+name: ExplorerInjection
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+meta:
+  attack:
+    - T1055
+  tags:
+    - WHIDS
+matches:
+  $ga: .Event.EventData.GrantedAccess &= '0x20'
+  $srcwl: .Event.EventData.SourceImage ~= '(?i:C:\\Windows\\System32\\(csrss)\.exe)'
+  $hosted: .Event.EventData.SourceImage ~= '(?i:\\(lsass|svchost)\.exe$)'
+  $win10shared: .Event.EventData.SourceServices ~= '(?i:(^|,)(AJRouter|AppIDSvc|AppMgmt|AssignedAccessManagerSvc|AxInstSV|BDESVC|BFE|BrokerInfrastructure|BTAGService|bthserv|CertPropSvc|CoreMessagingRegistrar|CscService|DcomLaunch|DeviceAssociationService|DevQueryBroker|diagsvc|DisplayEnhancementService|dmwappushservice|dot3svc|DsSvc|Eaphost|EFS|embeddedmode|EntAppSvc|fdPHost|FDResPub|fhsvc|FrameServer|GraphicsPerfSvc|hidserv|HvHost|icssvc|IKEEXT|IpxlatCfgSvc|KeyIso|KtmRm|lltdsvc|LxpSvc|mpssvc|MSiSCSI|NaturalAuthentication|NcaSvc|NcdAutoSetup|Netlogon|Netman|NetSetupSvc|NetTcpPortSharing|p2pimsvc|p2psvc|PeerDistSvc|pla|PNRPAutoReg|PNRPsvc|PolicyAgent|Power|PrintNotify|QWAVE|RasAuto|RasMan|RemoteAccess|RemoteRegistry|RetailDemo|RmSvc|RpcEptMapper|RpcSs|SamSs|SCardSvr|ScDeviceEnum|SCPolicySvc|seclogon|SensorService|SensrSvc|SessionEnv|SharedAccess|SharedRealitySvc|shpamsvc|SmsRouter|svsvc|SystemEventsBroker|TapiSrv|TermService|TroubleshootingSvc|tzautoupdate|UmRdpService|upnphost|VaultSvc|vmicguestinterface|vmicheartbeat|vmickvpexchange|vmicrdv|vmicshutdown|vmictimesync|vmicvmsession|vmicvss|W32Time|WalletService|WbioSrvc|wcncsvc|WebClient|Wecsvc|WEPHOSTSVC|wercplsupport|WFDSConMgrSvc|WiaRpc|WinRM|wlpasvc|WManSvc|workfolderssvc|WwanSvc|XblAuthManager|XblGameSave|XboxGipSvc|XboxNetApiSvc|AarSvc_\w+|BcastDVRUserService_\w+|BluetoothUserService_\w+|CaptureService_\w+|ConsentUxUserSvc_\w+|DeviceAssociationBrokerSvc_\w+|DevicePickerUserSvc_\w+|DevicesFlowUserSvc_\w+|MessagingService_\w+|OneSyncSvc_\w+|PimIndexMaintenanceSvc_\w+|PrintWorkflowUserSvc_\w+|UnistoreSvc_\w+|UserDataSvc_\w+)(,|$))'
+  $win10svcs: .Event.EventData.SourceServices ~= '(?i:^(ALG|Appinfo|AppReadiness|AppVClient|AppXSvc|AudioEndpointBuilder|Audiosrv|autotimesvc|BITS|BthAvctpSvc|camsvc|CDPSvc|ClipSVC|COMSysApp|CryptSvc|defragsvc|DeviceInstall|Dhcp|diagnosticshub.standardcollector.service|DiagTrack|DispBrokerDesktopSvc|DmEnrollmentSvc|Dnscache|DoSvc|DPS|DsmSvc|DusmSvc|EventLog|EventSystem|Fax|FontCache|gpsvc|InstallService|iphlpsvc|LanmanServer|LanmanWorkstation|lfsvc|LicenseManager|lmhosts|LSM|MapsBroker|MSDTC|msiserver|NcbService|netprofm|NgcCtnrSvc|NgcSvc|NlaSvc|nsi|PcaSvc|perceptionsimulation|PerfHost|PhoneSvc|PlugPlay|ProfSvc|PushToInstall|RpcLocator|Schedule|SDRSVC|SecurityHealthService|SEMgrSvc|SENS|Sense|SensorDataService|SgrmBroker|ShellHWDetection|smphost|SNMPTRAP|spectrum|Spooler|sppsvc|SSDPSRV|ssh-agent|SstpSvc|StateRepository|stisvc|StorSvc|swprv|SysMain|TabletInputService|Themes|TieringEngineService|TimeBrokerSvc|TokenBroker|TrkWks|TrustedInstaller|UevAgentService|UserManager|UsoSvc|VacSvc|vds|VSS|WaaSMedicSvc|WarpJITSvc|wbengine|Wcmsvc|WdiServiceHost|WdiSystemHost|WdNisSvc|WerSvc|WinDefend|WinHttpAutoProxySvc|Winmgmt|wisvc|WlanSvc|wlidsvc|wmiApSrv|WMPNetworkSvc|WpcMonSvc|WPDBusEnum|WpnService|wscsvc|WSearch|wuauserv|cbdhsvc_\w+|CDPUserSvc_\w+|WpnUserService_\w+)$)'
+  $sysmon: .Event.EventData.SourceServices ~= 'Sysmon64'
+  $expl: .Event.EventData.TargetImage ~= '(?i:C:\\Windows\\Explorer\.exe)'
+  $srcisparent: .Event.EventData.SourceProcessGUID = @.Event.EventData.TargetParentProcessGuid
+condition: $ga and $expl and !($srcisparent or ($hosted and $win10shared) or $win10svcs
+  or $sysmon or $srcwl)
+severity: 10
+actions: null
+...
+
+---
+name: FilePrivEsc
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+matches:
+  $wl: .Event.EventData.TargetFilename ~= '(?i:C:\\(Users|ProgramData)\\.*)'
+  $il: .Event.EventData.IntegrityLevel ~= '(Low|Medium)'
+condition: $il and !$wl
+severity: 10
+actions: null
+meta:
+  tags:
+    - WHIDS
+...
+
+---
+name: FromDownloadedDocument
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $pimsoffice: .Event.EventData.ParentImage ~= '(?i:\\(excel|winword|powerpnt|outlook)\.exe)$'
+  $pcl: .Event.EventData.ParentCommandLine ~= '(?i:appdata\\local\\microsoft\\windows\\temporary
+    internet files\\)'
+condition: $pimsoffice and $pcl
+severity: 0
+actions: null
+meta:
+  tags:
+    - Office
+    - Download
+...
+
+---
+name: Heur7zExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1193
+  tags:
+    - Archive
+    - Exec
+    - Sysmon
+matches:
+  $pi: .Event.EventData.ParentImage ~= '(?i:\\7zFM\.exe$)'
+  $i: .Event.EventData.Image ~= '(?i:^C:\\Users\\.*\\AppData\\Local\\Temp\\)'
+  $cl: .Event.EventData.CommandLine ~= '(\\Temp\\.*?((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf))))'
+condition: $pi and ($i or $cl)
+severity: 5
+actions: null
+...
+
+---
+name: HeurADSInCL
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1096
+  tags:
+    - Heuristics
+    - ADS
+matches:
+  $ads: .Event.EventData.CommandLine ~= '(?i:\.[a-z0-9]{2,5}:\w*?\.[a-z0-9]{2,5})'
+condition: $ads
+severity: 5
+actions: null
+...
+
+---
+name: HeurBrowserInjection
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+matches:
+  $ct: .Event.EventData.CallTrace ~= 'UNKNOWN'
+  $src: .Event.EventData.SourceImage ~= '(?i:\\(iexplore|firefox|chrome|MicrosoftEdge|opera|vivaldi)\.exe)$'
+  $dst: .Event.EventData.TargetImage ~= '(?i:\\(iexplore|firefox|chrome|MicrosoftEdge|opera|vivaldi)\.exe)$'
+  $write: .Event.EventData.GrantedAccess &= '0x20'
+condition: $dst and !$src and $ct and $write
+severity: 8
+actions: null
+meta:
+  tags:
+    - Browser
+...
+
+---
+name: HeurCLWithCreds
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $ruser: '.Event.EventData.CommandLine ~= ''(?i: /U )'''
+  $rhost: '.Event.EventData.CommandLine ~= ''(?i: /S )'''
+  $rpwd: '.Event.EventData.CommandLine ~= ''(?i: /P )'''
+condition: $ruser and $rhost and $rpwd
+severity: 5
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - Lateral
+...
+
+---
+name: HeurCallShellcode
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 8
+matches:
+  $stfunc: .Event.EventData.StartFunction = ''
+  $stmod: .Event.EventData.StartModule = ''
+condition: $stfunc and $stmod
+severity: 6
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - RemoteThread
+    - Sysmon
+...
+
+---
+name: HeurDnsFromSuspicious
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 22
+matches:
+  $susp: .Event.EventData.Image ~= '(?i:\\(certutil|rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm)\.exe)$'
+condition: $susp
+severity: 5
+actions: null
+meta:
+  tags:
+    - DNS
+    - Heuristics
+...
+
+---
+name: HeurDropper
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+matches:
+  $susp: .Event.EventData.Image ~= '(?i:\\(certutil|rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm)\.exe)$'
+  $target: .Event.EventData.TargetFilename ~= '((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf)))$'
+  $poltest: .Event.EventData.TargetFilename ~= '(?i:C:\\Users\\.*?\\AppData\\Local\\Temp\\__PSScriptPolicyTest_.*?\.ps1)'
+condition: $susp and $target and !$poltest
+severity: 8
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - CreateFile
+...
+
+---
+name: HeurLongDomain
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-DNS-Client/Operational: []
+matches:
+  $ldomain: .Event.EventData.QueryName ~= '.{50,}'
+condition: $ldomain
+severity: 6
+actions: null
+meta:
+  tags:
+    - DNS
+    - Heuristics
+...
+
+---
+name: HeurMaliciousAccess
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+matches:
+  $ct: .Event.EventData.CallTrace ~= 'UNKNOWN'
+  $whitelist: .Event.EventData.SourceImage ~= '(?i:(?i:C:\\Windows\\Sys(wow64|tem32)\\)(sdiagnhost|svchost)\.exe)'
+  $windows: .Event.EventData.TargetImage ~= '(?i:C:\\Windows\\)'
+  $write: .Event.EventData.GrantedAccess &= '0x20'
+  $read: .Event.EventData.GrantedAccess &= '0x10'
+  $srcisparent: .Event.EventData.SourceProcessGUID = @.Event.EventData.TargetParentProcessGuid
+condition: '!$srcisparent and $windows and $ct and ($write or $read) and !$whitelist'
+severity: 8
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - WHIDS
+...
+
+---
+name: HeurOfficeThreat
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $anc: .Event.EventData.Ancestors ~= '(?i:\\(excel|winword|powerpnt|outlook)\.exe)'
+  $tools: .Event.EventData.Image ~= '((?i:\\(rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm|dnx|rcsi|WinDbg|cdb|tracker|cmstp|msiexec|mavinject|SyncAppvPublishingServer|Odbcconf|msxsl|wmic)\.exe)|(?i:\\(certutil)\.exe))'
+condition: $tools and $anc
+severity: 10
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - WHIDS
+    - MSOffice
+...
+
+---
+name: HeurPersistentRAT
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exist: .Event.EventData.Ancestors ~= '(?i:^System\|)'
+  $anc: .Event.EventData.Ancestors ~= '(?i:C:\\Windows\\explorer\.exe)'
+  $schedsvc: .Event.EventData.ParentServices ~= '^(Schedule|BrokerInfrastructure,DcomLaunch,Power,SystemEventsBroker)$'
+  $tools: .Event.EventData.Image ~= '(?i:\\(ping|systeminfo|net1?|xcopy|nbtstat|bitsadmin|netstat|powershell|cmd|cscript|wscript|arp|at|certutil|dsquery|ipconfig|netsh|reg|route|schtasks|wusa|wmic|sc|rundll32|qprocess|tasklist|query)\.exe$)'
+condition: $exist and $tools and !$anc and !$schedsvc
+severity: 8
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - WHIDS
+...
+
+---
+name: HeurRAT
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $tools: .Event.EventData.Image ~= '(?i:\\(ping|systeminfo|net1?|xcopy|nbtstat)\.exe$)'
+  $parent: .Event.EventData.ParentImage ~= '(?i:C:\\Windows\\.*\\(powershell|cmd|wscript|cscript|msiexec|net)\.exe$)'
+condition: $tools and !$parent
+severity: 6
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: HeurRemotePayload
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $susp: .Event.EventData.Image ~= '((?i:\\(certutil|rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm)\.exe)|(?i:\\wmic\.exe))'
+  $rempld: .Event.EventData.CommandLine ~= '(?i:(\\\\.*?\\|https?://).*\.\w{2,5})'
+condition: $susp and $rempld
+severity: 7
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: HeurSpawnShell
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $shell: .Event.EventData.Image ~= '(?i:\\(powershell|cmd)\.exe$)'
+  $validparent: .Event.EventData.ParentImage ~= '(?i:(c:\\Windows\\Explorer\.exe|c:\\Windows\\.*\\(powershell|cmd)\.exe)$)'
+condition: $shell and !$validparent
+severity: 5
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: HeurSuspFileWrite
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4663
+matches:
+  $access: .Event.EventData.AccessMask &= '0x2'
+  $user_proc: .Event.EventData.ProcessName ~= '(?i:C:\\Users\\)'
+  $target: .Event.EventData.ObjectName ~= '(?i:C:\\Windows\\).*((?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf))|(?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node)))$'
+condition: $access and $target
+severity: 8
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: HeurSysmonLongDomain
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 22
+matches:
+  $ldomain: .Event.EventData.QueryName ~= '.{50,}'
+  $ip6: .Event.EventData.QueryName ~= 'ip6\.arpa\.$'
+condition: $ldomain and !$ip6
+severity: 6
+actions: null
+meta:
+  tags:
+    - DNS
+    - Heuristics
+    - Sysmon
+...
+
+---
+name: HeurWebShell
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $anc: .Event.EventData.Ancestors ~= '(?:\\(tomcat.*?|w3wp|php-cgi|nginx|httpd|apache.*?)\.exe)'
+  $tools: .Event.EventData.Image ~= '(?i:\\(ping|systeminfo|net1?|xcopy|nbtstat|bitsadmin|netstat|powershell|cmd|cscript|wscript|arp|at|certutil|dsquery|ipconfig|netsh|reg|route|schtasks|wusa|wmic|sc|rundll32|qprocess|tasklist|query)\.exe$)'
+condition: $tools and $anc
+severity: 10
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - WHIDS
+    - WebShell
+...
+
+---
+name: HeurZipExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1193
+  tags:
+    - Archive
+    - Exec
+    - Sysmon
+matches:
+  $pi: .Event.EventData.ParentImage ~= '(?i:C:\\Windows\\Explorer\.exe$)'
+  $cl: .Event.EventData.CommandLine ~= '(?i:\\Temp.*?\\[^\\]*\.zip\\[^\\]*((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf))))'
+condition: $pi and $cl
+severity: 5
+actions: null
+...
+
+---
+name: HeuristicSamlibDll
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+matches:
+  $il1: .Event.EventData.ImageLoaded ~= '(?i:\\samlib.dll$)'
+  $system32: .Event.EventData.Image ~= '(?i:C:\\Windows\\System32\\[^\\]*?\.exe)'
+  $programfile: .Event.EventData.Image ~= '(?i:C:\\Program Files.*?\\.*)'
+  $exp: .Event.EventData.Image ~= '(?i:^C:\\Windows\\explorer.exe$)'
+condition: $il1 and !$system32 and !$programfile and !$exp
+severity: 6
+actions: null
+meta:
+  tags:
+    - Mimikatz
+    - Credentials
+    - DLL
+...
+
+---
+name: HeuristicVaultcliDll
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+matches:
+  $il1: .Event.EventData.ImageLoaded ~= '(?i:\\vaultcli.dll$)'
+  $system32: .Event.EventData.Image ~= '(?i:C:\\Windows\\System32\\[^\\]*?\.exe)'
+  $searchui: .Event.EventData.Image ~= '(?i:(?i:C:\\Windows\\SystemApps\\).*?\\searchui\.exe)'
+condition: $il1 and !($system32 or $searchui)
+severity: 6
+actions: null
+meta:
+  tags:
+    - Mimikatz
+    - Credentials
+    - DLL
+...
+
+---
+name: HiddenPsExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $psexec: .Event.EventData.Product = 'Sysinternals PsExec'
+  $im: .Event.EventData.Image ~= '(?i:\\psexe(c|svc).exe$)'
+condition: $psexec and !$im
+severity: 9
+actions: null
+meta:
+  tags:
+    - Powershell
+    - Heuristics
+...
+
+---
+name: HighlyPolymorphicCode
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 25
+meta:
+  attack:
+    - T1093
+  tags:
+    - WHIDS
+matches:
+  $lowboundproc: .Event.EventData.ProcessIntegrity >= '50'
+condition: $lowboundproc
+severity: 10
+actions: null
+...
+
+---
+name: InfoRemotePath
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $rpath: .Event.EventData.CommandLine ~= '(?i:\\\\[\w\.]+)'
+condition: $rpath
+severity: 0
+actions: null
+meta:
+  tags:
+    - Info
+    - Lateral
+...
+
+---
+name: InfoSuspiciousParent
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $susp: .Event.EventData.ParentImage ~= '(?i:\\(certutil|rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm)\.exe)$'
+condition: $susp
+severity: 0
+actions: null
+meta:
+  tags:
+    - Info
+...
+
+---
+name: LargeBase64
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $lb64: .Event.EventData.CommandLine ~= '[0-9A-Za-z]{512,}'
+condition: $lb64
+severity: 3
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: LargeCL512
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $lcl: .Event.EventData.CommandLine ~= '.{512,}'
+  $llcl: .Event.EventData.CommandLine ~= '.{999,}'
+  $wlp1: .Event.EventData.Image ~= '^C:\\Program Files.*?\\Mozilla Firefox\\firefox\.exe$'
+  $wlp2: .Event.EventData.Image ~= '^C:\\Program Files.*?\\Google\\Chrome\\Application\\chrome\.exe$'
+  $wlp3: .Event.EventData.Image ~= '(?i:Java.*\\jp2launcher.exe$)'
+  $wlp4: .Event.EventData.Image ~= '(?i:\\(java\.exe))'
+condition: $lcl and !($llcl or $wlp1 or $wlp2 or $wlp3 or $wlp4)
+severity: 2
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: LargeCL999
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $lcl: .Event.EventData.CommandLine ~= '.{999,}'
+  $wlp1: .Event.EventData.Image ~= '^C:\\Program Files.*?\\Mozilla Firefox\\firefox\.exe$'
+  $wlp2: .Event.EventData.Image ~= '^C:\\Program Files.*?\\Google\\Chrome\\Application\\chrome\.exe$'
+  $wlp3: .Event.EventData.Image ~= '(?i:Java.*\\jp2launcher.exe$)'
+  $wlp4: .Event.EventData.Image ~= '(?i:\\(java\.exe))'
+condition: $lcl and !$wlp1 and !$wlp2 and !$wlp3 and !$wlp4
+severity: 3
+actions: null
+meta:
+  tags:
+    - Heuristics
+...
+
+---
+name: LateralWMI
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $wmi: .Event.EventData.Image ~= '(?i:\\wmic\.exe$)'
+  $node: .Event.EventData.CommandLine ~= '(?i:/node:)'
+condition: $wmi and $node
+severity: 8
+actions: null
+meta:
+  tags:
+    - WMI
+    - Lateral
+...
+
+---
+name: LogonFromExternal
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4624
+matches:
+  $iplh1: .Event.EventData.IpAddress = '-'
+  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
+  $iplh3: .Event.EventData.IpAddress = '::1'
+  $privip: .Event.EventData.IpAddress ~= '(?i:(^127\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.))'
+condition: '!($privip or $iplh1 or $iplh2 or $iplh3)'
+severity: 10
+actions: null
+meta:
+  tags:
+    - Lateral
+    - Security
+...
+
+---
+name: MSOfficeThreat
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1193
+  tags:
+    - Office
+    - Threat
+matches:
+  $pimsoffice: .Event.EventData.ParentImage ~= '(?i:\\(excel|winword|powerpnt|outlook)\.exe)$'
+  $susp: .Event.EventData.Image ~= '(?i:\\(certutil|rundll32|powershell|wscript|cscript|cmd|mshta|regsvr32|msbuild|installutil|regasm)\.exe)$'
+  $fp1: .Event.EventData.CommandLine ~= '(?i:shell32\.dll,(OpenAs_RunDLL|SHCreateLocalServerRunDll|Control_RunDLL))'
+condition: $pimsoffice and !$fp1 and $susp
+severity: 8
+actions: null
+...
+
+---
+name: MaliciousLsassAccess
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+meta:
+  attack:
+    - T1003
+  tags:
+    - Mimikatz
+    - Credentials
+    - Lsass
+matches:
+  $ct: .Event.EventData.CallTrace ~= 'UNKNOWN'
+  $lsass: .Event.EventData.TargetImage ~= '(?i:\\lsass\.exe$)'
+condition: $lsass and $ct
+severity: 10
+actions: null
+...
+
+---
+name: MaliciousSvchostAccess
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+matches:
+  $ct: .Event.EventData.CallTrace ~= 'UNKNOWN'
+  $svchost: .Event.EventData.TargetImage ~= '(?i:windows\\sys(tem32|wow64)\\svchost\.exe$)'
+condition: $svchost and $ct
+severity: 10
+actions: null
+meta:
+  tags:
+    - Invoke-Phant0m
+    - SvcHost
+...
+
+---
+name: MediumPolymorphicCode
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 25
+meta:
+  attack:
+    - T1093
+  tags:
+    - WHIDS
+matches:
+  $lowboundproc: .Event.EventData.ProcessIntegrity >= '15'
+  $upboundproc: .Event.EventData.ProcessIntegrity < '50'
+condition: $lowboundproc and $upboundproc
+severity: 8
+actions: null
+...
+
+---
+name: NTLMDowngradeAttack
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 13
+meta:
+  attack:
+    - T1003
+  tags:
+    - Credentials
+    - Lsass
+matches:
+  $ntlmminclientsec: .Event.EventData.TargetObject ~= '^(?i:HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\MSV1_0\\NtlmMinClientSec)'
+  $lmcompatlevel: .Event.EventData.TargetObject ~= '^(?i:HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\LMCompatibilityLevel)'
+  $restsendntlmtraffic: .Event.EventData.TargetObject ~= '^(?i:HKLM\\System\\CurrentControlSet\\Control\\Lsa\\MSV1_0\\RestrictSendingNTLMTraffic)'
+  $setval: .Event.EventData.EventType = 'SetValue'
+  $v0x0: .Event.EventData.Details = 'DWORD (0x00000000)'
+  $v0x1: .Event.EventData.Details = 'DWORD (0x00000001)'
+  $v0x2: .Event.EventData.Details = 'DWORD (0x00000002)'
+condition: ($lmcompatlevel and $setval and ($v0x0 or $v0x1 or $v0x2)) or ($restsendntlmtraffic
+  and $setval and $v0x0) or $ntlmminclientsec
+severity: 10
+actions: null
+...
+
+---
+name: NTLMDowngradeAttackSecurity
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4657
+meta:
+  attack:
+    - T1003
+  tags:
+    - Credentials
+matches:
+  $msv1key: .Event.EventData.ObjectName ~= '(?i:\\SYSTEM\\ControlSet.*?\\Control\\Lsa\\MSV1_0)'
+  $lsakey: .Event.EventData.ObjectName ~= '(?i:\\SYSTEM\\ControlSet.*?\\Control\\Lsa)'
+  $restsendntlmtraffic: .Event.EventData.ObjectValueName = 'RestrictSendingNTLMTraffic'
+  $lmcompatlevel: .Event.EventData.ObjectValueName = 'LMCompatibilityLevel'
+  $ntlmminclientsec: .Event.EventData.ObjectValueName = 'NtlmMinClientSec'
+condition: '($lsakey and $lmcompatlevel) or ($msv1key and ($restsendntlmtraffic or
+  $ntlmminclientsec)) '
+severity: 10
+actions: null
+...
+
+---
+name: Nbtstat.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\nbtstat\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: Net.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\net1?\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: NewADS
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 15
+meta:
+  attack:
+    - T1096
+  tags:
+    - ADS
+matches:
+  $broker: .Event.EventData.Image ~= '(?i:C:\\Windows\\system32\\browser_broker.exe)'
+  $target: .Event.EventData.TargetFilename ~= '(?i::Zone\.Identifier$)'
+condition: '!($broker and $target)'
+severity: 0
+actions: null
+...
+
+---
+name: NewAutorun
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 13
+meta:
+  attack:
+    - T1060
+  tags:
+    - Registry
+    - Autorun
+matches:
+  $eventtype: .Event.EventData.EventType = 'SetValue'
+  $run: .Event.EventData.TargetObject ~= '(?i:(?i:\\SOFTWARE(\\WOW6432Node)??)\\Microsoft\\Windows\\CurrentVersion\\Run)'
+  $runonce: .Event.EventData.TargetObject ~= '(?i:(?i:\\SOFTWARE(\\WOW6432Node)??)\\Microsoft\\Windows\\CurrentVersion\\RunOnce)'
+  $uimls: .Event.EventData.TargetObject ~= '(?i:\\Environment\\UserInitMprLogonScript$)'
+  $com: .Event.EventData.TargetObject ~= '(?i:(?i:HKCR(\\WOW6432Node)??)\\CLSID)'
+condition: $eventtype and ($run or $runonce or $uimls or $com)
+severity: 8
+actions: null
+...
+
+---
+name: NewExeCreatedInRoot
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+matches:
+  $smss: .Event.EventData.Image ~= '(?i:C:\\Windows\\System32\\smss\.exe)'
+  $pageswap: .Event.EventData.TargetFilename ~= '(?i:C:\\(page|swap)file\.sys)'
+  $target: .Event.EventData.TargetFilename ~= '(?i:c:\\[^\\]*?((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf)))$)'
+condition: $target and !($smss and $pageswap)
+severity: 10
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - CreateFile
+...
+
+---
+name: NewLocalAdmin
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $net: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sys(tem32|wow64)\\net1?\.exe)'
+  $command: .Event.EventData.CommandLine ~= '(?i:localgroup\s+Administrators.*?/ADD)'
+condition: $net and $command
+severity: 10
+actions: null
+meta:
+  tags:
+    - ''
+...
+
+---
+name: NewRemoteScheduledTask
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1053
+  tags:
+    - ScheduledTasks
+    - Lateral
+matches:
+  $schtasks: .Event.EventData.Image ~= '(?i:^c:\\windows\\system32\\schtasks\.exe$)'
+  $create: .Event.EventData.CommandLine ~= '(?i:/(create|xml))'
+  $remote: .Event.EventData.CommandLine ~= '(?i:/S )'
+condition: '$schtasks and $remote and $create '
+severity: 7
+actions: null
+...
+
+---
+name: NewSchedTaskInReg
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 13
+meta:
+  attack:
+    - T1053
+  tags:
+    - Registry
+    - Autorun
+    - ScheduledTasks
+matches:
+  $eventtype: .Event.EventData.EventType = 'SetValue'
+  $newid: .Event.EventData.TargetObject ~= '(?i:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\.*?\\Id$)'
+condition: $eventtype and $newid
+severity: 8
+actions: null
+...
+
+---
+name: NewSchedTaskOnDisk
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+meta:
+  attack:
+    - T1053
+  tags:
+    - ScheduledTasks
+matches:
+  $target: .Event.EventData.TargetFilename ~= '(?i:^C:\\Windows\\Sys(tem32|wow64)\\Tasks\\)'
+condition: $target
+severity: 8
+actions: null
+...
+
+---
+name: NewScheduledTask
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1053
+  tags:
+    - ScheduledTasks
+matches:
+  $schtasks: .Event.EventData.Image ~= '(?i:^c:\\windows\\sys(tem32|wow64)\\schtasks\.exe$)'
+  $create: .Event.EventData.CommandLine ~= '(?i:/(xml|create))'
+  $remote: .Event.EventData.CommandLine ~= '(?i:/S )'
+condition: $schtasks and !$remote and $create
+severity: 4
+actions: null
+...
+
+---
+name: NotWhitelisted
+params:
+  filter: false
+  disable: true
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+      - 6
+      - 7
+matches:
+  $md5: extract('MD5=(?P<md5>[A-F0-9]{32})', Hashes) in whitelist
+  $sha1: extract('SHA1=(?P<sha1>[A-F0-9]{40})', Hashes) in whitelist
+  $sha256: extract('SHA256=(?P<sha256>[A-F0-9]{64})', Hashes) in whitelist
+condition: '!($md5 and $sha1 and $sha256)'
+severity: 8
+actions: null
+meta:
+  tags:
+    - Whitelist
+...
+
+---
+name: OfficeDropper
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 11
+meta:
+  attack:
+    - T1193
+  tags:
+    - Office
+    - Dropper
+matches:
+  $office: .Event.EventData.Image ~= '(?i:\\(excel|winword|powerpnt|outlook)\.exe)$'
+  $target: .Event.EventData.TargetFilename ~= '((?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))|(?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf)))$'
+condition: $office and $target
+severity: 8
+actions: null
+...
+
+---
+name: OfficeDropperExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1193
+  tags:
+    - Office
+    - Dropper
+matches:
+  $pimsoffice: .Event.EventData.ParentImage ~= '(?i:\\(excel|winword|powerpnt|outlook)\.exe)$'
+  $whitelisted: .Event.EventData.Image ~= '^((?i:C:\\Windows\\)|(?i:C:\\(PROGRA~(1|2)|Program
+    Files.*?)\\)|(?i:C:\\ProgramData\\AppV\\))'
+condition: $pimsoffice and !$whitelisted
+severity: 8
+actions: null
+...
+
+---
+name: PSC#Win32API
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-PowerShell/Operational: []
+matches:
+  $api: .Event.EventData.ScriptBlockText ~= '(?i:(OpenProcess|OpenThread|SetThreadContext|OpenThreadToken|GetProcAddress|OpenThreadToken|OpenProcessToken|CreateProcess|WriteProcessMemory|ReadProcessMemory|VirtualAlloc))'
+condition: $api
+severity: 7
+actions: null
+meta:
+  tags:
+    - Powershell
+    - C#
+    - ScriptBlock
+...
+
+---
+name: PSInvokeExpression
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-PowerShell/Operational:
+      - 4103
+meta:
+  attack:
+    - T1202
+  tags:
+    - Powershell
+matches:
+  $ci: .Event.EventData.Payload ~= 'CommandInvocation\(Invoke-Expression\)'
+condition: $ci
+severity: 6
+actions: null
+...
+
+---
+name: Ping.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\ping\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: PowershellEmbeddedC#
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $ps: .Event.EventData.ParentImage ~= '(?i:\\powershell.exe$)'
+  $csc: .Event.EventData.Image ~= '(?i:\\csc.exe$)'
+condition: $csc and $ps
+severity: 3
+actions: null
+meta:
+  tags:
+    - Powershell
+    - EmbeddedCode
+...
+
+---
+name: PowershellExecEnc
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1202
+  tags:
+    - Powershell
+    - Heuristics
+matches:
+  $i: .Event.EventData.Image ~= '(?i:\\powershell.exe$)'
+  $enc: '.Event.EventData.CommandLine ~= ''(?i: (-|/)e[ncodedcommands]* )'''
+condition: $i and $enc
+severity: 5
+actions: null
+...
+
+---
+name: PowershellLargeCL
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $lcl: .Event.EventData.CommandLine ~= '.{512,}'
+  $ps: .Event.EventData.Image ~= '(?i:\\powershell.exe$)'
+condition: $lcl and $ps
+severity: 4
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - CL
+...
+
+---
+name: PowershellSamlibDll
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+matches:
+  $il: .Event.EventData.ImageLoaded ~= '(?i:\\samlib.dll$)'
+  $ps: .Event.EventData.Image ~= '(?i:\\powershell\.exe$)'
+condition: $ps and $il
+severity: 8
+actions: null
+meta:
+  tags:
+    - Mimikatz
+    - Credentials
+    - Powershell
+    - DLL
+...
+
+---
+name: PowershellStdin
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1202
+  tags:
+    - Powershell
+matches:
+  $ps: .Event.EventData.Image ~= '(?i:\\powershell.exe$)'
+  $arg: '.Event.EventData.CommandLine ~= ''(?i: (-|/)c[ommand]*\s+-)'''
+condition: $ps and $arg
+severity: 5
+actions: null
+...
+
+---
+name: ProcPrivEsc
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+matches:
+  $ga: .Event.EventData.GrantedAccess &= '0x20'
+  $srclow: .Event.EventData.SourceIntegrityLevel = 'Low'
+  $srcmed: .Event.EventData.SourceIntegrityLevel = 'Medium'
+  $srchigh: .Event.EventData.SourceIntegrityLevel = 'High'
+  $tgtmed: .Event.EventData.TargetIntegrityLevel = 'Medium'
+  $tgthigh: .Event.EventData.TargetIntegrityLevel = 'High'
+  $tgtsys: .Event.EventData.TargetIntegrityLevel = 'System'
+condition: $ga and (($srclow and ($tgtmed or $tgthigh or $tgtsys)) or ($srcmed and
+  ($tgthigh or $tgtsys)) or ($srchigh and $tgtsys))
+severity: 8
+actions: null
+meta:
+  tags:
+    - WHIDS
+...
+
+---
+name: ProcessCreate
+params:
+  filter: true
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+severity: 0
+actions: null
+meta:
+  tags: null
+...
+
+---
+name: PsExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $psexec: .Event.EventData.Product = 'Sysinternals PsExec'
+  $im: .Event.EventData.Image ~= '(?i:\\psexe(c|svc).exe$)'
+condition: $psexec and $im
+severity: 7
+actions: null
+meta:
+  tags:
+    - Powershell
+    - Heuristics
+...
+
+---
+name: PsExec4624
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 4624
+matches:
+  $psexec: .Event.EventData.ProcessName ~= '(?i:\\PSEXESVC\.exe$)'
+condition: $psexec
+severity: 5
+actions: null
+meta:
+  tags:
+    - Lateral
+    - Security
+...
+
+---
+name: PsExecCommand
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $psexesvc: .Event.EventData.ParentImage ~= '(?i:\\psexesvc.exe$)'
+condition: $psexesvc
+severity: 10
+actions: null
+meta:
+  tags:
+    - Powershell
+    - Heuristics
+...
+
+---
+name: Reg.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\reg\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: Regsvr32ApplockerBypass
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1117
+  tags:
+    - Regsvr32
+    - AppLockerBypass
+    - Sysmon
+matches:
+  $im: .Event.EventData.Image ~= '(?i:^c:\\windows\\sys(wow64|tem32)\\regsvr32.exe$)'
+  $sw1: '.Event.EventData.CommandLine ~= ''(?i: /n )'''
+  $sw2: '.Event.EventData.CommandLine ~= ''(?i: /s )'''
+  $sw3: '.Event.EventData.CommandLine ~= ''(?i: /u )'''
+  $sw4: '.Event.EventData.CommandLine ~= ''(?i: /i:)'''
+condition: $im and $sw4 and $sw3 and $sw2 and $sw1
+severity: 10
+actions: null
+...
+
+---
+name: RunningScheduledTask
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1053
+  tags:
+    - ScheduledTasks
+matches:
+  $schtasks: .Event.EventData.ParentImage ~= '(?i:^c:\\windows\\system32\\schtasks\.exe$)'
+condition: $schtasks
+severity: 3
+actions: null
+...
+
+---
+name: SecurityLogClearing
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Security:
+      - 1102
+meta:
+  attack:
+    - T1070
+  tags:
+    - PostExploit
+severity: 8
+actions: null
+...
+
+---
+name: ServiceDeletion
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $sc: .Event.EventData.Image ~= '(?i:sc.exe$)'
+  $op: '.Event.EventData.CommandLine ~= ''(?i: (delete) )'''
+condition: $sc and $op
+severity: 3
+actions: null
+meta:
+  tags:
+    - Services
+...
+
+---
+name: StopSvchostAccess
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+matches:
+  $svchost: .Event.EventData.TargetImage ~= '(?i:C:\\windows\\sys(tem32|wow64)\\svchost\.exe)'
+  $wl: .Event.EventData.SourceImage ~= '((?i:C:\\ProgramData\\Microsoft\\Windows Defender\\platform\\.*?\\MsMpEng\.exe|C:\\Program
+    Files.*?\\Windows Defender\\.*?\.exe)|(?i:C:\\Windows\\sysmon(64)?\.exe)|(?i:C:\\Windows\\Sys(wow64|tem32)\\[^\\]*\.exe)|(?i:C:\\Windows\\sys(tem32|wow64)\\wbem\\wmiprvse\.exe))'
+  $stopresume: .Event.EventData.GrantedAccess &= '0x0800'
+  $terminate: .Event.EventData.GrantedAccess &= '0x0001'
+condition: $svchost and ($stopresume or $terminate) and !$wl
+severity: 7
+actions: null
+meta:
+  tags:
+    - Invoke-Phant0m
+    - SvcHost
+...
+
+---
+name: SuspWMIC
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $wmic: .Event.EventData.Image ~= '(?i:\\wmic\.exe$)'
+  $proc: .Event.EventData.CommandLine ~= '(?i:process\s+call\s+create)'
+condition: $wmic and $proc
+severity: 8
+actions: null
+meta:
+  tags:
+    - WMI
+...
+
+---
+name: SuspWriteAccess
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+meta:
+  attack:
+    - T1055
+  tags:
+    - WHIDS
+matches:
+  $ga: .Event.EventData.GrantedAccess &= '0x20'
+  $wlsvcs: .Event.EventData.SourceServices ~= '(?i:(Sysmon64|Appinfo|PcaSvc|Themes))'
+  $srcwl: .Event.EventData.SourceImage ~= '(?i:(?i:C:\\Windows\\Sys(wow64|tem32)\\)(conhost|csrss|lsass)\.exe)'
+  $trgwl: .Event.EventData.TargetImage ~= '(?i:(?i:C:\\(PROGRA~(1|2)|Program Files.*?)\\WindowsApps\\)(Microsoft\.MicrosoftOfficeHub_.*?\\LocalBridge\.exe))'
+  $srcisparent: .Event.EventData.SourceProcessGUID = @.Event.EventData.TargetParentProcessGuid
+  $srcistarget: .Event.EventData.SourceImage = @.Event.EventData.TargetImage
+  $srcissystem: .Event.EventData.SourceIntegrityLevel = 'System'
+condition: $ga and !($wlsvcs or $srcwl or $trgwl or $srcissystem or $srcisparent or
+  $srcistarget)
+severity: 8
+actions: null
+...
+
+---
+name: SuspiciousADS
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 15
+meta:
+  attack:
+    - T1096
+  tags:
+    - ADS
+matches:
+  $target: .Event.EventData.TargetFilename ~= '(?i:((?i:(\.ps1|\.bat|\.cmd|\.vb|\.vbs|\.vbscript|\.vbe|\.js|\.jse|\.ws|\.wsf))|(?i:(\.acm|\.ax|\.com|\.cpl|\.dic|\.dll|\.drv|\.ds|\.efi|\.exe|\.grm|\.iec|\.ime|\.lex|\.msstyles|\.mui|\.ocx|\.olb|\.rll|\.rs|\.scr|\.sys|\.tlb|\.tsp|\.winmd|\.node))))$'
+condition: $target
+severity: 8
+actions: null
+...
+
+---
+name: SuspiciousLsassAccess
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 10
+meta:
+  attack:
+    - T1003
+  tags:
+    - Mimikatz
+    - Credentials
+    - Lsass
+matches:
+  $ctwdef: .Event.EventData.CallTrace ~= '(?i:windows defender)'
+  $ga: .Event.EventData.GrantedAccess &= '0x10'
+  $lsass: .Event.EventData.TargetImage ~= '(?i:\\lsass\.exe$)'
+  $wmiprvse: .Event.EventData.SourceImage ~= '(?i:(?i:C:\\Windows\\Sys(wow64|tem32)\\)wbem\\wmiprvse\.exe)'
+  $taskmgr: .Event.EventData.SourceImage ~= '(?i:(?i:C:\\Windows\\Sys(wow64|tem32)\\)taskmgr\.exe)'
+  $boot: .Event.EventData.SourceImage ~= '(?i:C:\\Windows\\system32\\(wininit|csrss)\.exe)'
+condition: $lsass and $ga and !($ctwdef or $wmiprvse or $taskmgr or $boot)
+severity: 8
+actions: null
+...
+
+---
+name: SuspiciousRundll32
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+meta:
+  attack:
+    - T1085
+  tags:
+    - Rundll32
+matches:
+  $im: .Event.EventData.Image ~= '(?i:^c:\\windows\\sys(wow64|tem32)\\rundll32.exe$)'
+  $pgfiles: .Event.EventData.ImageLoaded ~= '(?i:^C:\\(PROGRA~2|Program Files.*?)\\)'
+  $windows: .Event.EventData.ImageLoaded ~= '(?i:^C:\\Windows\\)'
+condition: $im and !($pgfiles or $windows)
+severity: 6
+actions: null
+...
+
+---
+name: SuspiciousService
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $parent: .Event.EventData.ParentImage ~= '(?i:C:\\Windows\\(System32|SysWOW64)\\services\.exe)'
+  $windows: .Event.EventData.Image ~= '(?i:C:\\Windows\\)'
+  $programfile: .Event.EventData.Image ~= '(?i:C:\\(PROGRA~2|Program Files.*?)\\.*)'
+condition: $parent and !$windows and !$programfile
+severity: 4
+actions: null
+meta:
+  tags:
+    - SvcHost
+    - ImageLoaded
+    - Sysmon
+...
+
+---
+name: SuspiciousServiceCreated
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $sc: .Event.EventData.Image ~= '(?i:sc.exe$)'
+  $op: '.Event.EventData.CommandLine ~= ''(?i: (create) )'''
+  $binpath: .Event.EventData.CommandLine ~= '(?i:binPath=.*?C:\\Windows)'
+condition: $sc and $op and !$binpath
+severity: 7
+actions: null
+meta:
+  tags:
+    - Services
+...
+
+---
+name: SuspiciousServiceInstallation
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 13
+matches:
+  $eventtype: .Event.EventData.EventType = 'SetValue'
+  $key1: .Event.EventData.TargetObject ~= '(?i:^HKLM\\System\\CurrentControlSet\\services\\.*?\\ImagePath$)'
+  $key2: .Event.EventData.TargetObject ~= '(?i:^HKLM\\System\\CurrentControlSet\\services\\.*?\\Parameters\\ServiceDll$)'
+  $systemroot: .Event.EventData.Details ~= '(?i:%%SystemRoot%%)'
+  $service: .Event.EventData.Image ~= '(?i:C:\\Windows\\system32\\services.exe)'
+condition: $eventtype and ($key1 or $key2) and !($systemroot or $service)
+severity: 8
+actions: null
+meta:
+  tags:
+    - Services
+    - Registry
+    - Autorun
+...
+
+---
+name: SvcHostBadParent
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $svchost: .Event.EventData.Image ~= '(?i:^c:\\windows\\sys(tem32|wow64)\\svchost\.exe$)'
+  $pservices: .Event.EventData.ParentImage ~= '(?i:^C:\\Windows\\sys(tem32|wow64)\\(services|svchost)\.exe$)'
+condition: $svchost and !$pservices
+severity: 7
+actions: null
+meta:
+  tags:
+    - SvcHost
+    - Heuristics
+    - Sysmon
+...
+
+---
+name: SvcHostMimic
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $im: .Event.EventData.Image ~= '(?i:\\svchost)'
+  $svchost: .Event.EventData.Image ~= '(?i:c:\\windows\\sys(tem32|wow64)\\svchost.exe$)'
+condition: $im and !$svchost
+severity: 7
+actions: null
+meta:
+  tags:
+    - SvcHost
+    - Sysmon
+...
+
+---
+name: SvcHostUnsignedDll
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+matches:
+  $im: .Event.EventData.Image ~= '(?i:C:\\Windows\\System32\\svchost\.exe)'
+  $unsigned: .Event.EventData.Signed = 'false'
+condition: $im and $unsigned
+severity: 6
+actions: null
+meta:
+  tags:
+    - SvcHost
+    - ImageLoaded
+    - Sysmon
+...
+
+---
+name: SvcHostUntrustedDLL
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+matches:
+  $im: .Event.EventData.Image ~= '(?i:C:\\Windows\\System32\\svchost\.exe)'
+  $trusted: .Event.EventData.Signature ~= '^(Microsoft Windows|Microsoft Corporation|Microsoft
+    Windows Component Publisher|Microsoft Windows Publisher|Microsoft Windows 3rd
+    party Component)$'
+condition: $im and !$trusted
+severity: 7
+actions: null
+meta:
+  tags:
+    - SvcHost
+    - ImageLoaded
+    - Sysmon
+...
+
+---
+name: SysmonConfigChanged
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 16
+severity: 8
+actions: null
+meta:
+  tags:
+    - Sysmon
+...
+
+---
+name: SysmonConfigTampering
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 12
+      - 13
+matches:
+  $set: .Event.EventData.EventType = 'SetValue'
+  $del: .Event.EventData.EventType = 'DeleteValue'
+  $sysmon: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sysmon.exe)'
+  $target: .Event.EventData.TargetObject ~= '(?i:HKLM\\System\\CurrentControlSet\\services\\SysmonDrv\\Parameters\\(Options|HashingAlgorithm|Rules))'
+condition: $target and ($set or $del) and !$sysmon
+severity: 10
+actions: null
+meta:
+  tags:
+    - Sysmon
+...
+
+---
+name: SysmonDomainInMisp
+params:
+  filter: false
+  disable: true
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 22
+matches:
+  $domainBL: extract('(?P<dom>\w+\.\w+$)',QueryName) in misp'
+  $subdomainBL: extract('(?P<sub>\w+\.\w+\.\w+$)',QueryName) in misp'
+  $subsubdomainBL: extract('(?P<subsub>\w+\.\w+\.\w+\.\w+$)',QueryName) in misp'
+condition: $domainBL or $subdomainBL or $subsubdomainBL
+severity: 10
+actions: null
+meta:
+  tags:
+    - DNS
+    - Sysmon
+...
+
+---
+name: SysmonFingerprinting
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $sysmon: .Event.EventData.Product = 'Sysinternals Sysmon'
+  $sysmonim: .Event.EventData.Image ~= '(?i:C:\\Windows\\.*sysmon.*)'
+  $arg: .Event.EventData.CommandLine ~= '(?i:\s-c\s*$)'
+condition: ($sysmon or $sysmonim) and $arg
+severity: 6
+actions: null
+meta:
+  tags:
+    - Sysmon
+...
+
+---
+name: SysmonRegFingerprinting
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 12
+matches:
+  $create: .Event.EventData.EventType = 'CreateKey'
+  $sysmon: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sysmon.exe)'
+  $target: .Event.EventData.TargetObject ~= '(?i:^HKLM\\System\\CurrentControlSet\\services\\SysmonDrv\\Parameters)'
+condition: $target and $create and !$sysmon
+severity: 7
+actions: null
+meta:
+  tags:
+    - Sysmon
+...
+
+---
+name: SysmonStateChanged
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 4
+matches:
+  $start: .Event.EventData.State = 'Started'
+condition: '!$start'
+severity: 8
+actions: null
+meta:
+  tags:
+    - Sysmon
+...
+
+---
+name: SystemInfo.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\systeminfo\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: Taskkill.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\taskkill\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: Tasklist.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\tasklist\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+
+---
+name: UnkDstPort
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 3
+matches:
+  $dstlocalhost: .Event.EventData.DestinationIp = '127.0.0.1'
+  $dstprivip: .Event.EventData.DestinationIp ~= '(?i:(^127\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.))'
+  $unk: .Event.EventData.DestinationPortName ~= '^$'
+  $system: .Event.EventData.Image ~= '^(?i:C:\\Windows\\Sys(wow64|tem32)\\)'
+  $init: .Event.EventData.Initiated = 'true'
+condition: '!$system and !$dstprivip and !$dstlocalhost and $unk and $init'
+severity: 8
+actions: null
+meta:
+  tags:
+    - Network
+...
+
+---
+name: UnkPrivDstPort
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 3
+matches:
+  $dstlocalhostv6: .Event.EventData.DestinationIp = '0:0:0:0:0:0:0:1'
+  $dstlocalhost: .Event.EventData.DestinationIp = '127.0.0.1'
+  $dstprivip: .Event.EventData.DestinationIp ~= '(?i:(^127\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.))'
+  $unk: .Event.EventData.DestinationPortName ~= '^$'
+  $system: .Event.EventData.Image ~= '^(?i:C:\\Windows\\Sys(wow64|tem32)\\)'
+  $init: .Event.EventData.Initiated = 'true'
+condition: '!$system and $dstprivip and !($dstlocalhost or $dstlocalhostv6) and $unk
+  and $init'
+severity: 6
+actions: null
+meta:
+  tags:
+    - Network
+...
+
+---
+name: UnknownServices
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exist: .Event.EventData.Services ~= '.'
+  $na: .Event.EventData.Services = 'N/A'
+  $hosted: .Event.EventData.Image ~= '(?i:\\(lsass|svchost)\.exe$)'
+  $sysmon: .Event.EventData.Services = 'Sysmon64'
+  $win10shared: .Event.EventData.Services ~= '(?i:(^|,)(AJRouter|AppIDSvc|AppMgmt|AssignedAccessManagerSvc|AxInstSV|BDESVC|BFE|BrokerInfrastructure|BTAGService|bthserv|CertPropSvc|CoreMessagingRegistrar|CscService|DcomLaunch|DeviceAssociationService|DevQueryBroker|diagsvc|DisplayEnhancementService|dmwappushservice|dot3svc|DsSvc|Eaphost|EFS|embeddedmode|EntAppSvc|fdPHost|FDResPub|fhsvc|FrameServer|GraphicsPerfSvc|hidserv|HvHost|icssvc|IKEEXT|IpxlatCfgSvc|KeyIso|KtmRm|lltdsvc|LxpSvc|mpssvc|MSiSCSI|NaturalAuthentication|NcaSvc|NcdAutoSetup|Netlogon|Netman|NetSetupSvc|NetTcpPortSharing|p2pimsvc|p2psvc|PeerDistSvc|pla|PNRPAutoReg|PNRPsvc|PolicyAgent|Power|PrintNotify|QWAVE|RasAuto|RasMan|RemoteAccess|RemoteRegistry|RetailDemo|RmSvc|RpcEptMapper|RpcSs|SamSs|SCardSvr|ScDeviceEnum|SCPolicySvc|seclogon|SensorService|SensrSvc|SessionEnv|SharedAccess|SharedRealitySvc|shpamsvc|SmsRouter|svsvc|SystemEventsBroker|TapiSrv|TermService|TroubleshootingSvc|tzautoupdate|UmRdpService|upnphost|VaultSvc|vmicguestinterface|vmicheartbeat|vmickvpexchange|vmicrdv|vmicshutdown|vmictimesync|vmicvmsession|vmicvss|W32Time|WalletService|WbioSrvc|wcncsvc|WebClient|Wecsvc|WEPHOSTSVC|wercplsupport|WFDSConMgrSvc|WiaRpc|WinRM|wlpasvc|WManSvc|workfolderssvc|WwanSvc|XblAuthManager|XblGameSave|XboxGipSvc|XboxNetApiSvc|AarSvc_\w+|BcastDVRUserService_\w+|BluetoothUserService_\w+|CaptureService_\w+|ConsentUxUserSvc_\w+|DeviceAssociationBrokerSvc_\w+|DevicePickerUserSvc_\w+|DevicesFlowUserSvc_\w+|MessagingService_\w+|OneSyncSvc_\w+|PimIndexMaintenanceSvc_\w+|PrintWorkflowUserSvc_\w+|UnistoreSvc_\w+|UserDataSvc_\w+)(,|$))'
+  $win10svcs: .Event.EventData.Services ~= '(?i:^(ALG|Appinfo|AppReadiness|AppVClient|AppXSvc|AudioEndpointBuilder|Audiosrv|autotimesvc|BITS|BthAvctpSvc|camsvc|CDPSvc|ClipSVC|COMSysApp|CryptSvc|defragsvc|DeviceInstall|Dhcp|diagnosticshub.standardcollector.service|DiagTrack|DispBrokerDesktopSvc|DmEnrollmentSvc|Dnscache|DoSvc|DPS|DsmSvc|DusmSvc|EventLog|EventSystem|Fax|FontCache|gpsvc|InstallService|iphlpsvc|LanmanServer|LanmanWorkstation|lfsvc|LicenseManager|lmhosts|LSM|MapsBroker|MSDTC|msiserver|NcbService|netprofm|NgcCtnrSvc|NgcSvc|NlaSvc|nsi|PcaSvc|perceptionsimulation|PerfHost|PhoneSvc|PlugPlay|ProfSvc|PushToInstall|RpcLocator|Schedule|SDRSVC|SecurityHealthService|SEMgrSvc|SENS|Sense|SensorDataService|SgrmBroker|ShellHWDetection|smphost|SNMPTRAP|spectrum|Spooler|sppsvc|SSDPSRV|ssh-agent|SstpSvc|StateRepository|stisvc|StorSvc|swprv|SysMain|TabletInputService|Themes|TieringEngineService|TimeBrokerSvc|TokenBroker|TrkWks|TrustedInstaller|UevAgentService|UserManager|UsoSvc|VacSvc|vds|VSS|WaaSMedicSvc|WarpJITSvc|wbengine|Wcmsvc|WdiServiceHost|WdiSystemHost|WdNisSvc|WerSvc|WinDefend|WinHttpAutoProxySvc|Winmgmt|wisvc|WlanSvc|wlidsvc|wmiApSrv|WMPNetworkSvc|WpcMonSvc|WPDBusEnum|WpnService|wscsvc|WSearch|wuauserv|cbdhsvc_\w+|CDPUserSvc_\w+|WpnUserService_\w+)$)'
+condition: $exist and !($na or $sysmon or ($hosted and $win10shared) or $win10svcs)
+severity: 10
+actions: null
+meta:
+  tags:
+    - WHIDS
+...
+
+---
+name: UntrustedDriverLoaded
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 6
+meta:
+  attack:
+    - T1014
+  tags:
+    - DriverLoaded
+    - Sysmon
+matches:
+  $trusted: .Event.EventData.Signature ~= '^(Microsoft Windows|Microsoft Corporation)$'
+condition: '!$trusted'
+severity: 10
+actions: null
+...
+
+---
+name: UntrustedService
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 7
+meta:
+  attack:
+    - T1035
+  tags:
+    - WHIDS
+matches:
+  $loaded: .Event.EventData.ImageLoaded ~= '(?i:\.exe$)'
+  $pservice: .Event.EventData.ParentImage ~= '(?i:(?i:C:\\Windows\\Sys(wow64|tem32)\\)services\.exe)'
+  $trusted: .Event.EventData.Signature ~= '^(Microsoft Windows|Microsoft Corporation|Microsoft
+    Windows Component Publisher|Microsoft Windows Publisher|Microsoft Windows 3rd
+    party Component)$'
+condition: $loaded and $pservice and !$trusted
+severity: 10
+actions: null
+...
+
+---
+name: UserTempExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $pi: .Event.EventData.ParentImage ~= '^C:\\Users\\.*\\AppData\\Local\\Temp\\'
+  $i: .Event.EventData.Image ~= '^C:\\Users\\.*\\AppData\\Local\\Temp\\'
+condition: $pi or $i
+severity: 4
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - Exec
+...
+
+---
+name: WMIApplockerBypassAttempt
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1220
+  tags:
+    - WMI
+matches:
+  $wmi: .Event.EventData.Image ~= '(?i:\\wmic\.exe$)'
+  $format: .Event.EventData.CommandLine ~= '(?i:/format:.*\.xsl)'
+condition: $wmi and $format
+severity: 8
+actions: null
+...
+
+---
+name: WMIEvents
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 19
+      - 20
+      - 21
+meta:
+  attack:
+    - T1084
+  tags:
+    - WMI
+severity: 10
+actions: null
+...
+
+---
+name: WMIPrvseCommand
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+meta:
+  attack:
+    - T1047
+  tags:
+    - WMI
+matches:
+  $wmi: .Event.EventData.ParentImage ~= '(?i:\\wmiprvse\.exe$)'
+condition: $wmi
+severity: 8
+actions: null
+...
+
+---
+name: WindowsTempExec
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $wtpi: .Event.EventData.ParentImage ~= '^C:\\Windows\\Temp'
+  $wti: .Event.EventData.Image ~= '^C:\\Windows\\Temp'
+condition: $wtpi or $wti
+severity: 3
+actions: null
+meta:
+  tags:
+    - Heuristics
+    - Exec
+...
+
+---
+name: Xcopy.exe
+params:
+  filter: false
+  disable: false
+match-on:
+  events:
+    Microsoft-Windows-Sysmon/Operational:
+      - 1
+matches:
+  $exe: .Event.EventData.Image ~= '(?i:\\xcopy\.exe$)'
+condition: $exe
+severity: 2
+actions: null
+meta:
+  tags:
+    - Tool
+...
+

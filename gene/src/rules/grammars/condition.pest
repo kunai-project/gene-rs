@@ -1,0 +1,15 @@
+ident       = @{ "$" ~ (ASCII_ALPHANUMERIC | "_")+ }
+_ident_test = _{ SOI ~ expr ~ EOI }
+
+negate =  { ("!" | "not") }
+op     = _{ or | and }
+and    =  { ("and" | "AND" | "&&") }
+or     =  { ("or" | "OR" | "||") }
+
+primary = _{ ident | "(" ~ expr ~ ")" }
+atom    = _{ negate? ~ primary }
+
+expr      =  { atom ~ (op ~ atom)* }
+condition = _{ SOI ~ expr ~ EOI }
+
+WHITESPACE = _{ " " }

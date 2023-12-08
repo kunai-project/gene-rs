@@ -1,0 +1,19 @@
+[package]
+name = "gene"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pest = "2.7.5"
+pest_derive = "2.7.5"
+lazy_static = "1.4.0"
+thiserror = "1.0.50"
+regex = "1.10.2"
+serde_yaml = { version = "0.9.27" }
+serde = { version = "1.0.192", features = ["derive"] }
+event_derive = { path = "../event_derive" }
+
+[dev-dependencies]
+serde_json = "1.0.108"
+libflate = "2.0.0"

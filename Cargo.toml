@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["gene", "event_derive"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Quentin JEROME"]
+edition = "2021"
