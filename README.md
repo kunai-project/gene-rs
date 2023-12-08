@@ -1,5 +1,7 @@
 <div align="center"><img src="assets/logo.svg" width="300"/></div>
 
+![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/0xrawsec/gene-rs/ci.yml?style=for-the-badge&logo=github)
+
 # Description
 
 This project is a Rust implementation of the [Gene project](https://github.com/0xrawsec/gene) initially 
