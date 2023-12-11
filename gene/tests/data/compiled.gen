@@ -28,11 +28,11 @@ match-on:
     Security:
       - 4648
 matches:
-  $iplh1: .Event.EventData.IpAddress = '-'
-  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
-  $iplh3: .Event.EventData.IpAddress = '::1'
+  $iplh1: .Event.EventData.IpAddress == '-'
+  $iplh2: .Event.EventData.IpAddress == '127.0.0.1'
+  $iplh3: .Event.EventData.IpAddress == '::1'
   $wlpn: .Event.EventData.ProcessName ~= 'C:\\Windows\\System32\\winlogon\.exe'
-  $wltsn: .Event.EventData.TargetServerName = 'localhost'
+  $wltsn: .Event.EventData.TargetServerName == 'localhost'
 condition: '!$iplh1 and !$iplh2 and !$iplh3 and !$wlpn and !$wltsn'
 severity: 4
 actions: null
@@ -52,11 +52,11 @@ match-on:
     Security:
       - 4624
 matches:
-  $logt: .Event.EventData.LogonType = '3'
-  $kerb: .Event.EventData.AuthenticationPackageName = 'Kerberos'
-  $user: .Event.EventData.TargetUserName = 'ANONYMOUS LOGON'
-  $iplh1: .Event.EventData.IpAddress = '-'
-  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
+  $logt: .Event.EventData.LogonType == '3'
+  $kerb: .Event.EventData.AuthenticationPackageName == 'Kerberos'
+  $user: .Event.EventData.TargetUserName == 'ANONYMOUS LOGON'
+  $iplh1: .Event.EventData.IpAddress == '-'
+  $iplh2: .Event.EventData.IpAddress == '127.0.0.1'
 condition: $logt and !$kerb and $user and !$iplh1 and !$iplh2
 severity: 5
 actions: null
@@ -268,7 +268,7 @@ match-on:
       - 11
 matches:
   $allowed: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sys(wow64|tem32)\\)'
-  $empty_ext: .Event.EventData.Extension = ''
+  $empty_ext: .Event.EventData.Extension == ''
   $count_by_ext: .Event.EventData.CountByExt >= '50'
 condition: '!$empty_ext and $count_by_ext'
 severity: 10
@@ -416,7 +416,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 6
 matches:
-  $valid: .Event.EventData.SignatureStatus = 'Valid'
+  $valid: .Event.EventData.SignatureStatus == 'Valid'
 condition: '!$valid'
 severity: 3
 actions: null
@@ -436,8 +436,8 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 6
 matches:
-  $valid: .Event.EventData.SignatureStatus = 'Valid'
-  $unavailable: .Event.EventData.SignatureStatus = 'Unavailable'
+  $valid: .Event.EventData.SignatureStatus == 'Valid'
+  $unavailable: .Event.EventData.SignatureStatus == 'Unavailable'
 condition: '!$valid and !$unavailable'
 severity: 7
 actions: null
@@ -569,7 +569,7 @@ meta:
   tags:
     - ADS
 matches:
-  $unk: .Event.EventData.Hash = 'Unknown'
+  $unk: .Event.EventData.Hash == 'Unknown'
   $impash: .Event.EventData.Hash ~= '(?i:(IMPHASH=00000000000000000000000000000000))'
 condition: '!($impash or $unk)'
 severity: 10
@@ -629,10 +629,10 @@ match-on:
     Security:
       - 4624
 matches:
-  $logt: .Event.EventData.LogonType = '3'
-  $user: .Event.EventData.TargetUserName = 'ANONYMOUS LOGON'
-  $iplh1: .Event.EventData.IpAddress = '-'
-  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
+  $logt: .Event.EventData.LogonType == '3'
+  $user: .Event.EventData.TargetUserName == 'ANONYMOUS LOGON'
+  $iplh1: .Event.EventData.IpAddress == '-'
+  $iplh2: .Event.EventData.IpAddress == '127.0.0.1'
   $enddol: .Event.EventData.TargetUserName ~= '\$$'
 condition: $logt and !($user or $iplh1 or $iplh2 or $enddol)
 severity: 5
@@ -665,7 +665,7 @@ matches:
   $win10svcs: .Event.EventData.SourceServices ~= '(?i:^(ALG|Appinfo|AppReadiness|AppVClient|AppXSvc|AudioEndpointBuilder|Audiosrv|autotimesvc|BITS|BthAvctpSvc|camsvc|CDPSvc|ClipSVC|COMSysApp|CryptSvc|defragsvc|DeviceInstall|Dhcp|diagnosticshub.standardcollector.service|DiagTrack|DispBrokerDesktopSvc|DmEnrollmentSvc|Dnscache|DoSvc|DPS|DsmSvc|DusmSvc|EventLog|EventSystem|Fax|FontCache|gpsvc|InstallService|iphlpsvc|LanmanServer|LanmanWorkstation|lfsvc|LicenseManager|lmhosts|LSM|MapsBroker|MSDTC|msiserver|NcbService|netprofm|NgcCtnrSvc|NgcSvc|NlaSvc|nsi|PcaSvc|perceptionsimulation|PerfHost|PhoneSvc|PlugPlay|ProfSvc|PushToInstall|RpcLocator|Schedule|SDRSVC|SecurityHealthService|SEMgrSvc|SENS|Sense|SensorDataService|SgrmBroker|ShellHWDetection|smphost|SNMPTRAP|spectrum|Spooler|sppsvc|SSDPSRV|ssh-agent|SstpSvc|StateRepository|stisvc|StorSvc|swprv|SysMain|TabletInputService|Themes|TieringEngineService|TimeBrokerSvc|TokenBroker|TrkWks|TrustedInstaller|UevAgentService|UserManager|UsoSvc|VacSvc|vds|VSS|WaaSMedicSvc|WarpJITSvc|wbengine|Wcmsvc|WdiServiceHost|WdiSystemHost|WdNisSvc|WerSvc|WinDefend|WinHttpAutoProxySvc|Winmgmt|wisvc|WlanSvc|wlidsvc|wmiApSrv|WMPNetworkSvc|WpcMonSvc|WPDBusEnum|WpnService|wscsvc|WSearch|wuauserv|cbdhsvc_\w+|CDPUserSvc_\w+|WpnUserService_\w+)$)'
   $sysmon: .Event.EventData.SourceServices ~= 'Sysmon64'
   $expl: .Event.EventData.TargetImage ~= '(?i:C:\\Windows\\Explorer\.exe)'
-  $srcisparent: .Event.EventData.SourceProcessGUID = @.Event.EventData.TargetParentProcessGuid
+  $srcisparent: .Event.EventData.SourceProcessGUID == @.Event.EventData.TargetParentProcessGuid
 condition: $ga and $expl and !($srcisparent or ($hosted and $win10shared) or $win10svcs
   or $sysmon or $srcwl)
 severity: 10
@@ -815,8 +815,8 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 8
 matches:
-  $stfunc: .Event.EventData.StartFunction = ''
-  $stmod: .Event.EventData.StartModule = ''
+  $stfunc: .Event.EventData.StartFunction == ''
+  $stmod: .Event.EventData.StartModule == ''
 condition: $stfunc and $stmod
 severity: 6
 actions: null
@@ -903,7 +903,7 @@ matches:
   $windows: .Event.EventData.TargetImage ~= '(?i:C:\\Windows\\)'
   $write: .Event.EventData.GrantedAccess &= '0x20'
   $read: .Event.EventData.GrantedAccess &= '0x10'
-  $srcisparent: .Event.EventData.SourceProcessGUID = @.Event.EventData.TargetParentProcessGuid
+  $srcisparent: .Event.EventData.SourceProcessGUID == @.Event.EventData.TargetParentProcessGuid
 condition: '!$srcisparent and $windows and $ct and ($write or $read) and !$whitelist'
 severity: 8
 actions: null
@@ -1164,7 +1164,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 1
 matches:
-  $psexec: .Event.EventData.Product = 'Sysinternals PsExec'
+  $psexec: .Event.EventData.Product == 'Sysinternals PsExec'
   $im: .Event.EventData.Image ~= '(?i:\\psexe(c|svc).exe$)'
 condition: $psexec and !$im
 severity: 9
@@ -1332,9 +1332,9 @@ match-on:
     Security:
       - 4624
 matches:
-  $iplh1: .Event.EventData.IpAddress = '-'
-  $iplh2: .Event.EventData.IpAddress = '127.0.0.1'
-  $iplh3: .Event.EventData.IpAddress = '::1'
+  $iplh1: .Event.EventData.IpAddress == '-'
+  $iplh2: .Event.EventData.IpAddress == '127.0.0.1'
+  $iplh3: .Event.EventData.IpAddress == '::1'
   $privip: .Event.EventData.IpAddress ~= '(?i:(^127\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.))'
 condition: '!($privip or $iplh1 or $iplh2 or $iplh3)'
 severity: 10
@@ -1455,10 +1455,10 @@ matches:
   $ntlmminclientsec: .Event.EventData.TargetObject ~= '^(?i:HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\MSV1_0\\NtlmMinClientSec)'
   $lmcompatlevel: .Event.EventData.TargetObject ~= '^(?i:HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\LMCompatibilityLevel)'
   $restsendntlmtraffic: .Event.EventData.TargetObject ~= '^(?i:HKLM\\System\\CurrentControlSet\\Control\\Lsa\\MSV1_0\\RestrictSendingNTLMTraffic)'
-  $setval: .Event.EventData.EventType = 'SetValue'
-  $v0x0: .Event.EventData.Details = 'DWORD (0x00000000)'
-  $v0x1: .Event.EventData.Details = 'DWORD (0x00000001)'
-  $v0x2: .Event.EventData.Details = 'DWORD (0x00000002)'
+  $setval: .Event.EventData.EventType == 'SetValue'
+  $v0x0: .Event.EventData.Details == 'DWORD (0x00000000)'
+  $v0x1: .Event.EventData.Details == 'DWORD (0x00000001)'
+  $v0x2: .Event.EventData.Details == 'DWORD (0x00000002)'
 condition: ($lmcompatlevel and $setval and ($v0x0 or $v0x1 or $v0x2)) or ($restsendntlmtraffic
   and $setval and $v0x0) or $ntlmminclientsec
 severity: 10
@@ -1482,9 +1482,9 @@ meta:
 matches:
   $msv1key: .Event.EventData.ObjectName ~= '(?i:\\SYSTEM\\ControlSet.*?\\Control\\Lsa\\MSV1_0)'
   $lsakey: .Event.EventData.ObjectName ~= '(?i:\\SYSTEM\\ControlSet.*?\\Control\\Lsa)'
-  $restsendntlmtraffic: .Event.EventData.ObjectValueName = 'RestrictSendingNTLMTraffic'
-  $lmcompatlevel: .Event.EventData.ObjectValueName = 'LMCompatibilityLevel'
-  $ntlmminclientsec: .Event.EventData.ObjectValueName = 'NtlmMinClientSec'
+  $restsendntlmtraffic: .Event.EventData.ObjectValueName == 'RestrictSendingNTLMTraffic'
+  $lmcompatlevel: .Event.EventData.ObjectValueName == 'LMCompatibilityLevel'
+  $ntlmminclientsec: .Event.EventData.ObjectValueName == 'NtlmMinClientSec'
 condition: '($lsakey and $lmcompatlevel) or ($msv1key and ($restsendntlmtraffic or
   $ntlmminclientsec)) '
 severity: 10
@@ -1567,7 +1567,7 @@ meta:
     - Registry
     - Autorun
 matches:
-  $eventtype: .Event.EventData.EventType = 'SetValue'
+  $eventtype: .Event.EventData.EventType == 'SetValue'
   $run: .Event.EventData.TargetObject ~= '(?i:(?i:\\SOFTWARE(\\WOW6432Node)??)\\Microsoft\\Windows\\CurrentVersion\\Run)'
   $runonce: .Event.EventData.TargetObject ~= '(?i:(?i:\\SOFTWARE(\\WOW6432Node)??)\\Microsoft\\Windows\\CurrentVersion\\RunOnce)'
   $uimls: .Event.EventData.TargetObject ~= '(?i:\\Environment\\UserInitMprLogonScript$)'
@@ -1660,7 +1660,7 @@ meta:
     - Autorun
     - ScheduledTasks
 matches:
-  $eventtype: .Event.EventData.EventType = 'SetValue'
+  $eventtype: .Event.EventData.EventType == 'SetValue'
   $newid: .Event.EventData.TargetObject ~= '(?i:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\.*?\\Id$)'
 condition: $eventtype and $newid
 severity: 8
@@ -1962,12 +1962,12 @@ match-on:
       - 10
 matches:
   $ga: .Event.EventData.GrantedAccess &= '0x20'
-  $srclow: .Event.EventData.SourceIntegrityLevel = 'Low'
-  $srcmed: .Event.EventData.SourceIntegrityLevel = 'Medium'
-  $srchigh: .Event.EventData.SourceIntegrityLevel = 'High'
-  $tgtmed: .Event.EventData.TargetIntegrityLevel = 'Medium'
-  $tgthigh: .Event.EventData.TargetIntegrityLevel = 'High'
-  $tgtsys: .Event.EventData.TargetIntegrityLevel = 'System'
+  $srclow: .Event.EventData.SourceIntegrityLevel == 'Low'
+  $srcmed: .Event.EventData.SourceIntegrityLevel == 'Medium'
+  $srchigh: .Event.EventData.SourceIntegrityLevel == 'High'
+  $tgtmed: .Event.EventData.TargetIntegrityLevel == 'Medium'
+  $tgthigh: .Event.EventData.TargetIntegrityLevel == 'High'
+  $tgtsys: .Event.EventData.TargetIntegrityLevel == 'System'
 condition: $ga and (($srclow and ($tgtmed or $tgthigh or $tgtsys)) or ($srcmed and
   ($tgthigh or $tgtsys)) or ($srchigh and $tgtsys))
 severity: 8
@@ -2002,7 +2002,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 1
 matches:
-  $psexec: .Event.EventData.Product = 'Sysinternals PsExec'
+  $psexec: .Event.EventData.Product == 'Sysinternals PsExec'
   $im: .Event.EventData.Image ~= '(?i:\\psexe(c|svc).exe$)'
 condition: $psexec and $im
 severity: 7
@@ -2221,9 +2221,9 @@ matches:
   $wlsvcs: .Event.EventData.SourceServices ~= '(?i:(Sysmon64|Appinfo|PcaSvc|Themes))'
   $srcwl: .Event.EventData.SourceImage ~= '(?i:(?i:C:\\Windows\\Sys(wow64|tem32)\\)(conhost|csrss|lsass)\.exe)'
   $trgwl: .Event.EventData.TargetImage ~= '(?i:(?i:C:\\(PROGRA~(1|2)|Program Files.*?)\\WindowsApps\\)(Microsoft\.MicrosoftOfficeHub_.*?\\LocalBridge\.exe))'
-  $srcisparent: .Event.EventData.SourceProcessGUID = @.Event.EventData.TargetParentProcessGuid
-  $srcistarget: .Event.EventData.SourceImage = @.Event.EventData.TargetImage
-  $srcissystem: .Event.EventData.SourceIntegrityLevel = 'System'
+  $srcisparent: .Event.EventData.SourceProcessGUID == @.Event.EventData.TargetParentProcessGuid
+  $srcistarget: .Event.EventData.SourceImage == @.Event.EventData.TargetImage
+  $srcissystem: .Event.EventData.SourceIntegrityLevel == 'System'
 condition: $ga and !($wlsvcs or $srcwl or $trgwl or $srcissystem or $srcisparent or
   $srcistarget)
 severity: 8
@@ -2356,7 +2356,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 13
 matches:
-  $eventtype: .Event.EventData.EventType = 'SetValue'
+  $eventtype: .Event.EventData.EventType == 'SetValue'
   $key1: .Event.EventData.TargetObject ~= '(?i:^HKLM\\System\\CurrentControlSet\\services\\.*?\\ImagePath$)'
   $key2: .Event.EventData.TargetObject ~= '(?i:^HKLM\\System\\CurrentControlSet\\services\\.*?\\Parameters\\ServiceDll$)'
   $systemroot: .Event.EventData.Details ~= '(?i:%%SystemRoot%%)'
@@ -2425,7 +2425,7 @@ match-on:
       - 7
 matches:
   $im: .Event.EventData.Image ~= '(?i:C:\\Windows\\System32\\svchost\.exe)'
-  $unsigned: .Event.EventData.Signed = 'false'
+  $unsigned: .Event.EventData.Signed == 'false'
 condition: $im and $unsigned
 severity: 6
 actions: null
@@ -2487,8 +2487,8 @@ match-on:
       - 12
       - 13
 matches:
-  $set: .Event.EventData.EventType = 'SetValue'
-  $del: .Event.EventData.EventType = 'DeleteValue'
+  $set: .Event.EventData.EventType == 'SetValue'
+  $del: .Event.EventData.EventType == 'DeleteValue'
   $sysmon: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sysmon.exe)'
   $target: .Event.EventData.TargetObject ~= '(?i:HKLM\\System\\CurrentControlSet\\services\\SysmonDrv\\Parameters\\(Options|HashingAlgorithm|Rules))'
 condition: $target and ($set or $del) and !$sysmon
@@ -2531,7 +2531,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 1
 matches:
-  $sysmon: .Event.EventData.Product = 'Sysinternals Sysmon'
+  $sysmon: .Event.EventData.Product == 'Sysinternals Sysmon'
   $sysmonim: .Event.EventData.Image ~= '(?i:C:\\Windows\\.*sysmon.*)'
   $arg: .Event.EventData.CommandLine ~= '(?i:\s-c\s*$)'
 condition: ($sysmon or $sysmonim) and $arg
@@ -2552,7 +2552,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 12
 matches:
-  $create: .Event.EventData.EventType = 'CreateKey'
+  $create: .Event.EventData.EventType == 'CreateKey'
   $sysmon: .Event.EventData.Image ~= '(?i:C:\\Windows\\Sysmon.exe)'
   $target: .Event.EventData.TargetObject ~= '(?i:^HKLM\\System\\CurrentControlSet\\services\\SysmonDrv\\Parameters)'
 condition: $target and $create and !$sysmon
@@ -2573,7 +2573,7 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 4
 matches:
-  $start: .Event.EventData.State = 'Started'
+  $start: .Event.EventData.State == 'Started'
 condition: '!$start'
 severity: 8
 actions: null
@@ -2649,11 +2649,11 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 3
 matches:
-  $dstlocalhost: .Event.EventData.DestinationIp = '127.0.0.1'
+  $dstlocalhost: .Event.EventData.DestinationIp == '127.0.0.1'
   $dstprivip: .Event.EventData.DestinationIp ~= '(?i:(^127\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.))'
   $unk: .Event.EventData.DestinationPortName ~= '^$'
   $system: .Event.EventData.Image ~= '^(?i:C:\\Windows\\Sys(wow64|tem32)\\)'
-  $init: .Event.EventData.Initiated = 'true'
+  $init: .Event.EventData.Initiated == 'true'
 condition: '!$system and !$dstprivip and !$dstlocalhost and $unk and $init'
 severity: 8
 actions: null
@@ -2672,12 +2672,12 @@ match-on:
     Microsoft-Windows-Sysmon/Operational:
       - 3
 matches:
-  $dstlocalhostv6: .Event.EventData.DestinationIp = '0:0:0:0:0:0:0:1'
-  $dstlocalhost: .Event.EventData.DestinationIp = '127.0.0.1'
+  $dstlocalhostv6: .Event.EventData.DestinationIp == '0:0:0:0:0:0:0:1'
+  $dstlocalhost: .Event.EventData.DestinationIp == '127.0.0.1'
   $dstprivip: .Event.EventData.DestinationIp ~= '(?i:(^127\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^192\.168\.))'
   $unk: .Event.EventData.DestinationPortName ~= '^$'
   $system: .Event.EventData.Image ~= '^(?i:C:\\Windows\\Sys(wow64|tem32)\\)'
-  $init: .Event.EventData.Initiated = 'true'
+  $init: .Event.EventData.Initiated == 'true'
 condition: '!$system and $dstprivip and !($dstlocalhost or $dstlocalhostv6) and $unk
   and $init'
 severity: 6
@@ -2698,9 +2698,9 @@ match-on:
       - 1
 matches:
   $exist: .Event.EventData.Services ~= '.'
-  $na: .Event.EventData.Services = 'N/A'
+  $na: .Event.EventData.Services == 'N/A'
   $hosted: .Event.EventData.Image ~= '(?i:\\(lsass|svchost)\.exe$)'
-  $sysmon: .Event.EventData.Services = 'Sysmon64'
+  $sysmon: .Event.EventData.Services == 'Sysmon64'
   $win10shared: .Event.EventData.Services ~= '(?i:(^|,)(AJRouter|AppIDSvc|AppMgmt|AssignedAccessManagerSvc|AxInstSV|BDESVC|BFE|BrokerInfrastructure|BTAGService|bthserv|CertPropSvc|CoreMessagingRegistrar|CscService|DcomLaunch|DeviceAssociationService|DevQueryBroker|diagsvc|DisplayEnhancementService|dmwappushservice|dot3svc|DsSvc|Eaphost|EFS|embeddedmode|EntAppSvc|fdPHost|FDResPub|fhsvc|FrameServer|GraphicsPerfSvc|hidserv|HvHost|icssvc|IKEEXT|IpxlatCfgSvc|KeyIso|KtmRm|lltdsvc|LxpSvc|mpssvc|MSiSCSI|NaturalAuthentication|NcaSvc|NcdAutoSetup|Netlogon|Netman|NetSetupSvc|NetTcpPortSharing|p2pimsvc|p2psvc|PeerDistSvc|pla|PNRPAutoReg|PNRPsvc|PolicyAgent|Power|PrintNotify|QWAVE|RasAuto|RasMan|RemoteAccess|RemoteRegistry|RetailDemo|RmSvc|RpcEptMapper|RpcSs|SamSs|SCardSvr|ScDeviceEnum|SCPolicySvc|seclogon|SensorService|SensrSvc|SessionEnv|SharedAccess|SharedRealitySvc|shpamsvc|SmsRouter|svsvc|SystemEventsBroker|TapiSrv|TermService|TroubleshootingSvc|tzautoupdate|UmRdpService|upnphost|VaultSvc|vmicguestinterface|vmicheartbeat|vmickvpexchange|vmicrdv|vmicshutdown|vmictimesync|vmicvmsession|vmicvss|W32Time|WalletService|WbioSrvc|wcncsvc|WebClient|Wecsvc|WEPHOSTSVC|wercplsupport|WFDSConMgrSvc|WiaRpc|WinRM|wlpasvc|WManSvc|workfolderssvc|WwanSvc|XblAuthManager|XblGameSave|XboxGipSvc|XboxNetApiSvc|AarSvc_\w+|BcastDVRUserService_\w+|BluetoothUserService_\w+|CaptureService_\w+|ConsentUxUserSvc_\w+|DeviceAssociationBrokerSvc_\w+|DevicePickerUserSvc_\w+|DevicesFlowUserSvc_\w+|MessagingService_\w+|OneSyncSvc_\w+|PimIndexMaintenanceSvc_\w+|PrintWorkflowUserSvc_\w+|UnistoreSvc_\w+|UserDataSvc_\w+)(,|$))'
   $win10svcs: .Event.EventData.Services ~= '(?i:^(ALG|Appinfo|AppReadiness|AppVClient|AppXSvc|AudioEndpointBuilder|Audiosrv|autotimesvc|BITS|BthAvctpSvc|camsvc|CDPSvc|ClipSVC|COMSysApp|CryptSvc|defragsvc|DeviceInstall|Dhcp|diagnosticshub.standardcollector.service|DiagTrack|DispBrokerDesktopSvc|DmEnrollmentSvc|Dnscache|DoSvc|DPS|DsmSvc|DusmSvc|EventLog|EventSystem|Fax|FontCache|gpsvc|InstallService|iphlpsvc|LanmanServer|LanmanWorkstation|lfsvc|LicenseManager|lmhosts|LSM|MapsBroker|MSDTC|msiserver|NcbService|netprofm|NgcCtnrSvc|NgcSvc|NlaSvc|nsi|PcaSvc|perceptionsimulation|PerfHost|PhoneSvc|PlugPlay|ProfSvc|PushToInstall|RpcLocator|Schedule|SDRSVC|SecurityHealthService|SEMgrSvc|SENS|Sense|SensorDataService|SgrmBroker|ShellHWDetection|smphost|SNMPTRAP|spectrum|Spooler|sppsvc|SSDPSRV|ssh-agent|SstpSvc|StateRepository|stisvc|StorSvc|swprv|SysMain|TabletInputService|Themes|TieringEngineService|TimeBrokerSvc|TokenBroker|TrkWks|TrustedInstaller|UevAgentService|UserManager|UsoSvc|VacSvc|vds|VSS|WaaSMedicSvc|WarpJITSvc|wbengine|Wcmsvc|WdiServiceHost|WdiSystemHost|WdNisSvc|WerSvc|WinDefend|WinHttpAutoProxySvc|Winmgmt|wisvc|WlanSvc|wlidsvc|wmiApSrv|WMPNetworkSvc|WpcMonSvc|WPDBusEnum|WpnService|wscsvc|WSearch|wuauserv|cbdhsvc_\w+|CDPUserSvc_\w+|WpnUserService_\w+)$)'
 condition: $exist and !($na or $sysmon or ($hosted and $win10shared) or $win10svcs)

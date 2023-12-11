@@ -379,7 +379,7 @@ mod test {
 ---
 name: test
 matches:
-    $a: .data.exe.file = '/bin/ls'
+    $a: .data.exe.file == '/bin/ls'
     $b: .data.exe.size > '42'
     $c: .data.exe.size >= '43'
     $d: .data.exe.size < '4242'
@@ -387,8 +387,8 @@ matches:
     $f: .data.exe.perm &= '0x40'
     $g: .data.exe.file ~= '^/bin/ls$'
     $h: .data.exe.file ~= '(?i:/BIN/LS)'
-    $i: .data.exe.file = @.data.exe.file
-    $k: .data.exe.file = @.data.exe.size
+    $i: .data.exe.file == @.data.exe.file
+    $k: .data.exe.file == @.data.exe.size
 condition: $a and $b and $c and $d and $e and $f and $g and $h and $i and not $k
 ..."#;
 
@@ -497,7 +497,7 @@ match-on:
     events:
         test: [42]
 matches:
-    $a: .path = "/some/path"
+    $a: .path == "/some/path"
 condition: $a
 ..."#;
 
@@ -528,7 +528,7 @@ match-on:
     events:
         test: [42]
 matches:
-    $a: .ip = "8.8.4.4"
+    $a: .ip == "8.8.4.4"
     #starts with 8.8
     $b: .ip ~= "^8\.8\."
 condition: $a and $b
@@ -558,7 +558,7 @@ condition: $a and $b
 ---
 name: test
 matches:
-    $a: '{{path}} = "{{pattern}}"'
+    $a: '{{path}} == "{{pattern}}"'
     $b: .ip ~= "^8\.8\."
 condition: $a and $b
 ..."#;
@@ -573,6 +573,6 @@ condition: $a and $b
 
         let matches = d.matches.unwrap();
         let m = matches.get("$a").unwrap();
-        assert_eq!(m, r#".data.file.exe = "8.8.4.4""#);
+        assert_eq!(m, r#".data.file.exe == "8.8.4.4""#);
     }
 }

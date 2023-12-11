@@ -332,14 +332,14 @@ mod test {
 
     #[test]
     fn test_direct_match() {
-        let dm = DirectMatch::from_str(r#".data.exe.file = "ba ba C:\windows\test\w""#).unwrap();
+        let dm = DirectMatch::from_str(r#".data.exe.file == "ba ba C:\windows\test\w""#).unwrap();
 
         assert_eq!(dm.field_path.to_string_lossy(), ".data.exe.file");
         assert_eq!(dm.field_path.segments()[0], "data");
         assert_eq!(dm.field_path.segments()[1], "exe");
         assert_eq!(dm.field_path.segments()[2], "file");
 
-        assert!(DirectMatch::from_str(r#".data.exe.size = none"#)
+        assert!(DirectMatch::from_str(r#".data.exe.size == none"#)
             .unwrap()
             .match_value(&FieldValue::None)
             .unwrap());
@@ -370,7 +370,7 @@ mod test {
 
     #[test]
     fn test_indirect_match() {
-        let im = IndirectMatch::from_str(r#".data.exe.size = @.data."field with space""#)
+        let im = IndirectMatch::from_str(r#".data.exe.size == @.data."field with space""#)
             .map_err(|e| {
                 println!("{e}");
                 e

@@ -183,7 +183,7 @@ pub enum Error {
 ///     comments:
 ///         - just a show case
 /// matches:
-///     $n: .name = "demo_event"
+///     $n: .name == "demo_event"
 ///     $pi: .some_gen >= '3.14'
 ///     $a: .data.a ~= '(?i:some_INNER.*)'
 ///     $b: .data.b <= '42'

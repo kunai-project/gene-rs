@@ -9,7 +9,7 @@ value    = @{ (value_dq | value_sq | "none") }
 
 // the order in which operators are evaluated is important
 op   = _{ eq | lte | lt | gte | gt | rex | flag }
-eq   =  { "=" }
+eq   =  { "==" }
 lt   =  { "<" }
 lte  =  { "<=" }
 gt   =  { ">" }
