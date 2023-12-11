@@ -24,7 +24,7 @@ use event_derive::FieldGetter;
 pub struct ScanResult {
     /// union of the rule names matching the event
     #[getter(skip)]
-    pub matches: HashSet<String>,
+    pub rules: HashSet<String>,
     /// union of tags defined in the rules matching the event
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
@@ -56,7 +56,7 @@ impl ScanResult {
         // we update matches only if it is not a filter rule
         if !r.is_filter() {
             // update matches
-            self.matches.insert(r.name.clone());
+            self.rules.insert(r.name.clone());
 
             // updating tags info
             self.tags = r.tags.union(&self.tags).cloned().collect();
@@ -97,19 +97,19 @@ impl ScanResult {
     /// returns true if the scan results is considered as a detection (i.e. it matched some detection rules)
     #[inline(always)]
     pub fn is_detection(&self) -> bool {
-        !self.matches.is_empty()
+        !self.rules.is_empty()
     }
 
     /// returns true if the `ScanResult` is empty
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.matches.is_empty() && !self.is_filtered()
+        self.rules.is_empty() && !self.is_filtered()
     }
 
     /// returns true if the `ScanResult` **only matched** filter rule(s)
     #[inline(always)]
     pub fn is_only_filter(&self) -> bool {
-        self.matches.is_empty() && self.is_filtered()
+        self.rules.is_empty() && self.is_filtered()
     }
 
     /// returns true if the `ScanResult` **also matched** a filter rule
@@ -193,7 +193,7 @@ pub enum Error {
 /// let scan_res = e.scan(&event).unwrap().unwrap();
 /// println!("{:#?}", scan_res);
 ///
-/// assert!(scan_res.matches.contains("toast.it"));
+/// assert!(scan_res.rules.contains("toast.it"));
 /// assert!(scan_res.contains_tag("my:super:tag"));
 /// assert!(scan_res.contains_attack_id("T1234"));
 /// ```
@@ -370,7 +370,7 @@ actions: ["do_something"]
         e.insert_rule(r).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.matches.contains("test"));
+        assert!(sr.rules.contains("test"));
         assert!(sr.contains_action("do_something"));
         assert!(!sr.is_filtered());
         assert!(!sr.is_empty());
@@ -397,7 +397,7 @@ actions: ["do_something"]
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         // filter matches should not be put in matches
-        assert!(!sr.matches.contains("test"));
+        assert!(!sr.rules.contains("test"));
         // actions are not taken in action
         assert!(!sr.contains_action("do_something"));
         assert!(!sr.is_empty());
@@ -435,7 +435,7 @@ match-on:
         e.insert_rule(filter).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.matches.contains("match"));
+        assert!(sr.rules.contains("match"));
         assert!(sr.contains_action("do_something"));
         assert!(sr.is_filtered());
         assert!(!sr.is_only_filter());
@@ -472,8 +472,8 @@ match-on:
         e.insert_rule(t4343).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.matches.contains("test.1"));
-        assert!(sr.matches.contains("test.2"));
+        assert!(sr.rules.contains("test.1"));
+        assert!(sr.rules.contains("test.2"));
         assert!(sr.tags.contains("some:random:tag"));
         assert!(sr.tags.contains("another:tag"));
     }
@@ -511,8 +511,8 @@ match-on:
         e.insert_rule(t4343).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.matches.contains("detect.t4242"));
-        assert!(sr.matches.contains("detect.t4343"));
+        assert!(sr.rules.contains("detect.t4242"));
+        assert!(sr.rules.contains("detect.t4343"));
         assert!(sr.contains_attack_id("t4242"));
         assert!(sr.contains_attack_id("t4343"));
     }
