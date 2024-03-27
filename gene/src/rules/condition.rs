@@ -54,7 +54,7 @@ pub enum Error {
     #[error("{0}")]
     Parser(#[from] Box<pest::error::Error<Rule>>),
     #[error("{0}")]
-    MatchError(#[from] matcher::Error),
+    Matcher(#[from] matcher::Error),
 }
 
 impl FromStr for Expr {
