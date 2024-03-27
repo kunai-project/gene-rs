@@ -87,10 +87,10 @@ where
 {
     #[inline]
     fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
-        if i.len() > 0 {
-            return None;
+        match self {
+            Some(v) => v.get_from_iter(i),
+            None => None,
         }
-        self.get_from_iter(i)
     }
 }
 
@@ -211,5 +211,37 @@ mod test {
 
         // checking that source function got generated properly
         assert_eq!(entry.source(), "test");
+    }
+
+    #[test]
+    // test reproducing https://github.com/0xrawsec/gene-rs/issues/1
+    fn test_option_bug() {
+        #[derive(FieldGetter, Debug)]
+        pub struct SomeStruct {
+            some_value: u64,
+        }
+
+        #[derive(Event, FieldGetter, Debug)]
+        #[event(id = 1, source = "whatever".into())]
+        pub struct SomeEvent {
+            pub type_id: String,
+            pub data: Option<SomeStruct>,
+        }
+
+        let event = SomeEvent {
+            type_id: "some_id".to_string(),
+            data: Some(SomeStruct { some_value: 1 }),
+        };
+
+        assert_eq!(
+            event.get_from_path(&path!(".type_id")),
+            Some("some_id".into())
+        );
+
+        assert!(event.get_from_path(&path!(".data")).is_none());
+        assert_eq!(
+            event.get_from_path(&path!(".data.some_value")),
+            Some(1u64.into())
+        );
     }
 }
