@@ -9,7 +9,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-gene_derive = { path = "../derive", version = "*" }
+gene_derive = { path = "../derive", version = ">=0.1.0" }
 pest = "2.7.5"
 pest_derive = "2.7.5"
 lazy_static = "1.4.0"
