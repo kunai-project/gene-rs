@@ -7,6 +7,8 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 license.workspace = true
+readme.workspace = true
+documentation = "https://docs.rs/gene"
 
 [dependencies]
 gene_derive = { path = "../derive", version = ">=0.1.0" }

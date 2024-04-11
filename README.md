@@ -1,5 +1,6 @@
 <div align="center"><img src="assets/logo.svg" width="300"/></div>
 
+![Crates.io Version](https://img.shields.io/crates/v/gene?style=for-the-badge)
 ![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/0xrawsec/gene-rs/ci.yml?style=for-the-badge&logo=github)
 
 # Description
