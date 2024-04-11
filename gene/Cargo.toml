@@ -8,6 +8,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+gene_derive = { path = "../derive" }
 pest = "2.7.5"
 pest_derive = "2.7.5"
 lazy_static = "1.4.0"
@@ -15,7 +16,6 @@ thiserror = "1.0.50"
 regex = "1.10.2"
 serde_yaml = { version = "0.9.27" }
 serde = { version = "1.0.192", features = ["derive"] }
-gene_derive = { path = "../gene_derive" }
 
 [dev-dependencies]
 serde_json = "1.0.108"
