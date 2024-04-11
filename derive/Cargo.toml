@@ -2,6 +2,7 @@
 name = "gene_derive"
 description = "Crate providing providing derive macros for gene-rs"
 authors.workspace = true
+rust-version.workspace = true
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

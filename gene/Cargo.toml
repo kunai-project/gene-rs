@@ -2,13 +2,14 @@
 name = "gene"
 description = "Crate providing a log matching framework written in Rust"
 authors.workspace = true
+rust-version.workspace = true
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-gene_derive = { path = "../derive" }
+gene_derive = { path = "../derive", version = "*" }
 pest = "2.7.5"
 pest_derive = "2.7.5"
 lazy_static = "1.4.0"
