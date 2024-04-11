@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, fs::File, io::Read, time::Duration};
 
-use event_derive::{Event, FieldGetter};
 use gene::{Engine, Event, FieldGetter, FieldValue, Rule};
+use gene_derive::{Event, FieldGetter};
 use libflate::gzip;
 use serde::{Deserialize, Deserializer};
 

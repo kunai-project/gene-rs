@@ -178,7 +178,7 @@ impl EventDerive {
 /// # Example
 ///
 /// ```rust
-/// use event_derive::{Event, FieldGetter};
+/// use gene_derive::{Event, FieldGetter};
 /// use gene::{Event,FieldGetter,FieldValue};
 /// use std::borrow::Cow;
 ///

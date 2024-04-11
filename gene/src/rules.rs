@@ -299,7 +299,7 @@ mod test {
 
     use super::*;
     use crate::{Event, FieldGetter, FieldValue};
-    use event_derive::{Event, FieldGetter};
+    use gene_derive::{Event, FieldGetter};
 
     macro_rules! def_event {
             // Match for a struct with fields and field attributes

@@ -17,7 +17,7 @@ pub enum PathError {
 /// # Example:
 ///
 /// ```rust
-/// use ::event_derive::FieldGetter;
+/// use ::gene_derive::FieldGetter;
 /// use ::gene::{XPath, FieldGetter, FieldValue};
 ///
 /// #[derive(FieldGetter)]

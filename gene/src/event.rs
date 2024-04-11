@@ -115,7 +115,7 @@ where
 mod test {
     use std::str::FromStr;
 
-    use event_derive::{Event, FieldGetter};
+    use gene_derive::{Event, FieldGetter};
     use serde::Deserialize;
 
     use super::*;

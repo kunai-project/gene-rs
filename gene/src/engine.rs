@@ -12,7 +12,7 @@ use crate::{
 };
 
 use crate::FieldGetter;
-use event_derive::FieldGetter;
+use gene_derive::FieldGetter;
 
 /// structure representing the result of an [Event] scanned by the
 /// [Engine]. It aggregates information about the rules matching a
@@ -136,7 +136,7 @@ pub enum Error {
 /// # Example
 ///
 /// ```
-/// use event_derive::{Event, FieldGetter};
+/// use gene_derive::{Event, FieldGetter};
 /// use gene::{Engine, Event,FieldGetter,FieldValue};
 /// use std::borrow::Cow;
 ///

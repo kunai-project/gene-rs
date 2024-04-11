@@ -1,8 +1,11 @@
 [package]
 name = "gene"
+description = "Crate providing a log matching framework written in Rust"
 authors.workspace = true
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 pest = "2.7.5"
@@ -12,7 +15,7 @@ thiserror = "1.0.50"
 regex = "1.10.2"
 serde_yaml = { version = "0.9.27" }
 serde = { version = "1.0.192", features = ["derive"] }
-event_derive = { path = "../event_derive" }
+gene_derive = { path = "../gene_derive" }
 
 [dev-dependencies]
 serde_json = "1.0.108"

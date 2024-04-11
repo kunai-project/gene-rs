@@ -1,8 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["gene", "event_derive"]
+members = ["gene", "gene_derive"]
 
 [workspace.package]
 version = "0.1.0"
 authors = ["Quentin JEROME"]
 edition = "2021"
+license = "GPL-3.0"
+license-file = "LICENSE"
+readme = "README.md"
+documentation = "https://docs.rs/gene"
+repository = "https://github.com/kunai-project/gene-rs"

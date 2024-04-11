@@ -6,7 +6,7 @@
 
 This project is a Rust implementation of the [Gene project](https://github.com/0xrawsec/gene) initially 
 written in Go. The main objective of this project is to embed a security event scanning engine to
-[Kunai](https://github.com/0xrawsec/kunai). Even though it has been built for a specific use case,
+[Kunai](https://github.com/kunai-project/kunai). Even though it has been built for a specific use case,
 the code in this library is completely re-usable for other log scanning purposes.
 
 This re-implementation was also the occasion to completely rework the rule format, to
