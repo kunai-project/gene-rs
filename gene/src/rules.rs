@@ -389,7 +389,9 @@ matches:
     $h: .data.exe.file ~= '(?i:/BIN/LS)'
     $i: .data.exe.file == @.data.exe.file
     $k: .data.exe.file == @.data.exe.size
-condition: $a and $b and $c and $d and $e and $f and $g and $h and $i and not $k
+    $l: .data.exe.size == '43'
+    $m: .data.exe.size == '0x2b'
+condition: $a and $b and $c and $d and $e and $f and $g and $h and $i and not $k and $l and $m
 ..."#;
 
         let d: Rule = serde_yaml::from_str(test).unwrap();

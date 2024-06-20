@@ -59,6 +59,7 @@ impl MatchParser {
 pub(crate) enum MatchValue {
     String(String),
     Number(Number),
+    StringOrNumber(String, Number),
     Regex(Regex),
     None,
 }
@@ -68,6 +69,7 @@ impl MatchValue {
         match self {
             Self::String(_) => "string",
             Self::Number(_) => "number",
+            Self::StringOrNumber(_, _) => "string_or_number",
             Self::Regex(_) => "regex",
             Self::None => "none",
         }
@@ -231,6 +233,10 @@ impl FromStr for DirectMatch {
             Rule::eq => (Op::Eq, {
                 if is_none {
                     MatchValue::None
+                } else if let Ok(i) = Number::from_str(sanit_value) {
+                    // handle the case where string can also be an
+                    // integer. Number::from_str manages hex prefix
+                    MatchValue::StringOrNumber(sanit_value.into(), i)
                 } else {
                     MatchValue::String(sanit_value.into())
                 }
@@ -266,13 +272,13 @@ macro_rules! cmp_values {
 
 impl DirectMatch {
     pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
-        if let Some(value) = event.get_from_path(&self.field_path) {
+        if let Some(fvalue) = event.get_from_path(&self.field_path) {
             return self
-                .match_value(&value)
+                .match_value(&fvalue)
                 .map_err(|_| Error::IncompatibleTypes {
                     path: self.field_path.to_string_lossy().into(),
                     expect: self.value.type_str(),
-                    got: value.type_str(),
+                    got: fvalue.type_str(),
                 });
         }
         Err(Error::FieldNotFound(
@@ -295,13 +301,32 @@ impl DirectMatch {
         let fv = compat.as_ref().unwrap_or(tgt);
 
         match self.op {
-            Op::Eq => cmp_values!(String, fv, ==, self.value).or({
-                if let (FieldValue::None, MatchValue::None) = (&fv, &(self.value)) {
-                    Ok(true)
-                } else {
-                    Err(())
-                }
-            }),
+            Op::Eq => cmp_values!(String, fv, ==, self.value)
+                .or({
+                    if let (FieldValue::None, MatchValue::None) = (&fv, &(self.value)) {
+                        Ok(true)
+                    } else {
+                        Err(())
+                    }
+                })
+                .or(
+                    if let (FieldValue::String(s), MatchValue::StringOrNumber(v, _)) =
+                        (&fv, &(self.value))
+                    {
+                        Ok(s == v)
+                    } else {
+                        Err(())
+                    },
+                )
+                .or(
+                    if let (FieldValue::Number(n), MatchValue::StringOrNumber(_, v)) =
+                        (&fv, &(self.value))
+                    {
+                        Ok(n == v)
+                    } else {
+                        Err(())
+                    },
+                ),
             Op::Gt => cmp_values!(Number, fv, >, self.value),
             Op::Gte => cmp_values!(Number, fv, >=, self.value),
             Op::Lt => cmp_values!(Number, fv, <, self.value),
