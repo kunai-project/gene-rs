@@ -89,7 +89,7 @@ where
     fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
         match self {
             Some(v) => v.get_from_iter(i),
-            None => None,
+            None => Some(FieldValue::None),
         }
     }
 }
