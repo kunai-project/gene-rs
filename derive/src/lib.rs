@@ -311,7 +311,11 @@ impl FieldGetterDerive {
             impl #generics FieldGetter for #struct_name #generics #generic_trait_bound{
                 #[inline(always)]
                 fn get_from_iter(&self, mut i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
-                    let field = i.next()?;
+
+                    let field = match i.next() {
+                        Some(s) => s,
+                        None => return Some(FieldValue::Some),
+                    };
 
                     match field.as_str() {
                         #(#arms)*

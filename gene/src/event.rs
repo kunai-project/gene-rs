@@ -103,7 +103,11 @@ where
         &self,
         mut i: core::slice::Iter<'_, std::string::String>,
     ) -> Option<FieldValue> {
-        let k = i.next()?;
+        let k = match i.next() {
+            Some(s) => s,
+            None => return Some(FieldValue::Some),
+        };
+
         if i.len() > 0 {
             return None;
         }
@@ -238,10 +242,14 @@ mod test {
             Some("some_id".into())
         );
 
-        assert!(event.get_from_path(&path!(".data")).is_none());
         assert_eq!(
             event.get_from_path(&path!(".data.some_value")),
             Some(1u64.into())
         );
+
+        // if value is not known, it must at least return FieldValue::Some
+        assert!(event.get_from_path(&path!(".data")).is_some());
+        // None must be returned if trying to get a non existing field
+        assert!(event.get_from_path(&path!(".unknown")).is_none());
     }
 }

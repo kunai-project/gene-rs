@@ -203,6 +203,7 @@ pub enum FieldValue {
     String(String),
     Number(Number),
     Bool(bool),
+    Some,
     None,
 }
 
@@ -212,6 +213,7 @@ impl std::fmt::Display for FieldValue {
             Self::String(s) => write!(f, "{}", s),
             Self::Number(s) => write!(f, "{}", s),
             Self::Bool(b) => write!(f, "{}", b),
+            Self::Some => write!(f, "some"),
             Self::None => write!(f, "none"),
         }
     }
@@ -223,6 +225,7 @@ impl FieldValue {
             Self::Bool(_) => "bool",
             Self::String(_) => "string",
             Self::Number(_) => "number",
+            Self::Some => "some",
             Self::None => "none",
         }
     }
@@ -232,12 +235,22 @@ impl FieldValue {
             Self::Number(_) => Ok(self),
             Self::String(s) => Ok(Self::Number(Number::from_str(&s)?)),
             Self::Bool(b) => Ok(Self::Number((b as u8).into())),
-            Self::None => Err(NumberError::InvalidConvertion),
+            Self::None | Self::Some => Err(NumberError::InvalidConvertion),
         }
     }
 
-    pub(crate) fn is_string(&self) -> bool {
+    pub(crate) const fn is_string(&self) -> bool {
         matches!(self, FieldValue::String(_))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_none(&self) -> bool {
+        matches!(self, FieldValue::None)
     }
 }
 

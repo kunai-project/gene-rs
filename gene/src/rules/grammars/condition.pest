@@ -1,5 +1,4 @@
-ident       = @{ "$" ~ (ASCII_ALPHANUMERIC | "_")+ }
-_ident_test = _{ SOI ~ expr ~ EOI }
+ident = @{ "$" ~ (ASCII_ALPHANUMERIC | "_")+ }
 
 negate =  { ("!" | "not") }
 op     = _{ or | and }
