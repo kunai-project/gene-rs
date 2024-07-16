@@ -333,7 +333,14 @@ impl DirectMatch {
                         Err(())
                     },
                 )
-                .or(Ok(fv.is_some() && matches!(self.value, MatchValue::Some))),
+                .or(
+                    // we return Ok only if we want to match some
+                    if matches!(self.value, MatchValue::Some) {
+                        Ok(fv.is_some())
+                    } else {
+                        Err(())
+                    },
+                ),
             Op::Gt => cmp_values!(Number, fv, >, self.value),
             Op::Gte => cmp_values!(Number, fv, >=, self.value),
             Op::Lt => cmp_values!(Number, fv, <, self.value),
@@ -423,6 +430,12 @@ mod test {
             .unwrap()
             .match_value(&FieldValue::None)
             .unwrap());
+
+        // we try to match None against a string so we must return an error
+        assert!(DirectMatch::from_str(r#".data is 'toast'"#)
+            .unwrap()
+            .match_value(&FieldValue::None)
+            .is_err());
     }
 
     #[test]
