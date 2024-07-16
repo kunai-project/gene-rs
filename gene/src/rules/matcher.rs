@@ -61,6 +61,7 @@ pub(crate) enum MatchValue {
     Number(Number),
     StringOrNumber(String, Number),
     Regex(Regex),
+    Some,
     None,
 }
 
@@ -71,6 +72,7 @@ impl MatchValue {
             Self::Number(_) => "number",
             Self::StringOrNumber(_, _) => "string_or_number",
             Self::Regex(_) => "regex",
+            Self::Some => "some",
             Self::None => "none",
         }
     }
@@ -226,13 +228,17 @@ impl FromStr for DirectMatch {
 
         // easier to trim quotes here rather than walking parsed items
         let str_value = inner_pairs.next().unwrap().as_str();
-        let is_none = str_value == "none" || str_value == "null";
+        let is_none = str_value == "none";
+        let is_some = str_value == "some";
+
         let sanit_value = str_value.trim_matches('\'').trim_matches('"');
 
         let (op, value) = match rule_op {
             Rule::eq => (Op::Eq, {
                 if is_none {
                     MatchValue::None
+                } else if is_some {
+                    MatchValue::Some
                 } else if let Ok(i) = Number::from_str(sanit_value) {
                     // handle the case where string can also be an
                     // integer. Number::from_str manages hex prefix
@@ -326,7 +332,8 @@ impl DirectMatch {
                     } else {
                         Err(())
                     },
-                ),
+                )
+                .or(Ok(fv.is_some() && matches!(self.value, MatchValue::Some))),
             Op::Gt => cmp_values!(Number, fv, >, self.value),
             Op::Gte => cmp_values!(Number, fv, >=, self.value),
             Op::Lt => cmp_values!(Number, fv, <, self.value),
@@ -391,6 +398,31 @@ mod test {
                 .unwrap()
                 .match_value(&"toast".into())
         );
+
+        assert!(DirectMatch::from_str(r#".data is none"#)
+            .unwrap()
+            .match_value(&FieldValue::None)
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data is some"#)
+            .unwrap()
+            .match_value(&FieldValue::Some)
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data is some"#)
+            .unwrap()
+            .match_value(&FieldValue::Number(42.into()))
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data is some"#)
+            .unwrap()
+            .match_value(&FieldValue::String("hello world".into()))
+            .unwrap());
+
+        assert!(!DirectMatch::from_str(r#".data is some"#)
+            .unwrap()
+            .match_value(&FieldValue::None)
+            .unwrap());
     }
 
     #[test]

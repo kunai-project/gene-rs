@@ -187,7 +187,7 @@ mod tests {
         let bad = ["a", "$a b", "$a-t"];
 
         bad.iter().for_each(|ident| {
-            if ConditionParser::parse(Rule::_ident_test, ident).is_ok() {
+            if ConditionParser::parse(Rule::condition, ident).is_ok() {
                 panic!("{ident} should produce an error")
             }
         });
