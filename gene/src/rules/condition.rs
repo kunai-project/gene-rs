@@ -23,13 +23,13 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Op {
     And,
     Or,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Expr {
     Variable(String),
     BinOp {
@@ -47,7 +47,7 @@ impl Default for Expr {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum Error {
     #[error("unknown operand {0}")]
     UnknowOperand(String),

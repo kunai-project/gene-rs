@@ -228,7 +228,7 @@ pub struct CompiledRule {
     pub(crate) actions: HashSet<String>,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum Error {
     #[error("rule={0} {1}")]
     Wrap(String, Box<Error>),

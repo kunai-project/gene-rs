@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::rules::matcher::{MatchParser, Rule};
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum PathError {
     #[error("{0}")]
     Parse(#[from] Box<pest::error::Error<Rule>>),

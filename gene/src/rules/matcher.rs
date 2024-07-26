@@ -82,7 +82,7 @@ impl MatchValue {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum Error {
     #[error("field={0} not found")]
     FieldNotFound(String),
