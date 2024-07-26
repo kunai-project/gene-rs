@@ -1,4 +1,22 @@
-ident = @{ "$" ~ (ASCII_ALPHANUMERIC | "_")+ }
+ident = _{ var | group }
+var   = @{ "$" ~ (ASCII_ALPHANUMERIC | "_")+ }
+
+// meta expressions
+group   =  { n_of_them | n_of_vars | all_of_them | all_of_vars | any_of_them | any_of_vars | none_of_them | none_of_vars }
+of_them = _{ "of" ~ "them" }
+of_vars = _{ "of" ~ var }
+// x_of
+n_of_them = { ASCII_DIGIT+ ~ of_them }
+n_of_vars = { ASCII_DIGIT+ ~ of_vars }
+// all_of
+all_of_them = { "all" ~ of_them }
+all_of_vars = { "all" ~ of_vars }
+// any_of
+any_of_them = { "any" ~ of_them }
+any_of_vars = { "any" ~ of_vars }
+// none_of
+none_of_them = { "none" ~ of_them }
+none_of_vars = { "none" ~ of_vars }
 
 negate =  { ("!" | "not") }
 op     = _{ or | and }

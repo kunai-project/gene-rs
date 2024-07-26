@@ -577,4 +577,241 @@ condition: $a and $b
         let m = matches.get("$a").unwrap();
         assert_eq!(m, r#".data.file.exe == "8.8.4.4""#);
     }
+
+    #[test]
+    fn test_all_of_them() {
+        let test = r#"
+---
+name: test
+matches:
+    $a: .ip == "8.8.4.4"
+    $b: .ip ~= "^8\.8\."
+condition: all of them
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            ip: "8.8.4.4".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_all_of_vars() {
+        let test = r#"
+---
+name: test
+matches:
+    $ip1: .ip == "8.8.4.4"
+    $ip2: .ip ~= "^8\.8\."
+    $t : .ip == "4.4.4.4"
+condition: all of $ip
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            ip: "8.8.4.4".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_any_of_them() {
+        let test = r#"
+---
+name: test
+matches:
+    $a: .ip == "8.8.4.4"
+    $b: .ip ~= "^8\.8\."
+condition: any of them
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            ip: "8.8.42.42".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_any_of_vars() {
+        let test = r#"
+---
+name: test
+matches:
+    $ip2: .ip == "42.42.42.42"
+    $ip3: .ip == "8.8.4.4"
+condition: any of $ip
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                ip: IpAddr,
+            }
+        );
+
+        for (ip, expect) in [
+            ("42.42.42.42", true),
+            ("8.8.4.4", true),
+            ("255.0.0.0", false),
+        ] {
+            let event = Dummy {
+                ip: ip.parse().unwrap(),
+            };
+
+            assert_eq!(cr.match_event(&event), Ok(expect));
+        }
+    }
+
+    #[test]
+    fn test_n_of_them() {
+        let test = r#"
+---
+name: test
+matches:
+    $path1: .path == "/bin/ls"
+    $ip2: .ip == "42.42.42.42"
+    $ip3: .ip == "8.8.4.4"
+condition: 2 of them
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                path: String,
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            path: "/bin/ls".into(),
+            ip: "42.42.42.42".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_n_of_vars() {
+        let test = r#"
+---
+name: test
+matches:
+    $path1: .path == "/bin/ls"
+    $path2: .path == "/bin/true"
+    $ip1: .ip == "42.42.42.42"
+    $ip2: .ip == "8.8.4.4"
+condition: 1 of $path or 1 of $ip
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                path: String,
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            path: "/bin/ls".into(),
+            ip: "42.42.42.42".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+
+        let event = Dummy {
+            path: "/bin/true".into(),
+            ip: "8.8.4.4".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_none_of_them() {
+        let test = r#"
+---
+name: test
+matches:
+    $a: .ip == "8.8.4.4"
+    $b: .ip ~= "^8\.8\."
+condition: none of them
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            ip: "42.42.42.42".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_none_of_vars() {
+        let test = r#"
+---
+name: test
+matches:
+    $ip: .ip == "8.8.4.4"
+    $ip: .ip ~= "^8\.8\."
+condition: none of $ip
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        def_event!(
+            pub struct Dummy {
+                ip: IpAddr,
+            }
+        );
+
+        let event = Dummy {
+            ip: "42.42.42.42".parse().unwrap(),
+        };
+
+        assert_eq!(cr.match_event(&event), Ok(true));
+    }
 }

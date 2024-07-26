@@ -11,7 +11,7 @@ mod test {
     fn test_condition_computation() {
         TEST_CONDITIONS.iter().for_each(|(condition, result)| {
             let cond = Expr::from_str(condition).unwrap();
-            assert_eq!(cond.compute(&OPERANDS), *result)
+            assert_eq!(cond.compute(&OPERANDS).unwrap(), *result)
         });
     }
 }
