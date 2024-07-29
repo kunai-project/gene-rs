@@ -20,7 +20,7 @@ use gene_derive::FieldGetter;
 /// A severity score (sum of all matching rules severity bounded to [MAX_SEVERITY](rules::MAX_SEVERITY)) is also part of a `ScanResult`.
 /// Some [Rules](Rule) matching an [Event] might be filter rules. In this
 /// case only the [filtered](ScanResult::filtered) flag is updated.
-#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScanResult {
     /// union of the rule names matching the event
     #[getter(skip)]
@@ -403,6 +403,114 @@ actions: ["do_something"]
         assert!(!sr.is_empty());
         assert!(sr.is_filtered());
         assert!(sr.is_only_filter());
+    }
+
+    #[test]
+    fn test_include_all_empty_filter() {
+        // test that we must take all events when nothing is
+        // included / excluded
+        let mut e = Engine::new();
+        let r = rule!(
+            r#"
+---
+name: test
+params:
+    filter: true
+match-on:
+    events:
+        test: []
+..."#
+        );
+
+        e.insert_rule(r).unwrap();
+        fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
+        e.scan(&IpEvt {}).unwrap().unwrap();
+
+        fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
+        e.scan(&PathEvt {}).unwrap().unwrap();
+    }
+
+    #[test]
+    fn test_include_filter() {
+        // test that only events included must be included
+        let mut e = Engine::new();
+        let r = rule!(
+            r#"
+---
+name: test
+params:
+    filter: true
+match-on:
+    events:
+        test: [ 2 ]
+..."#
+        );
+
+        e.insert_rule(r).unwrap();
+        fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
+        // not explicitly included so it should not be
+        assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
+
+        fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
+        e.scan(&PathEvt {}).unwrap().unwrap();
+    }
+
+    #[test]
+    fn test_exclude_filter() {
+        // test that only stuff excluded must be excluded
+        let mut e = Engine::new();
+        let r = rule!(
+            r#"
+---
+name: test
+params:
+    filter: true
+match-on:
+    events:
+        test: [ -1 ]
+..."#
+        );
+
+        e.insert_rule(r).unwrap();
+        fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
+        assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
+
+        // if not explicitely excluded it is included
+        fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
+        assert!(e.scan(&PathEvt {}).unwrap().is_some());
+
+        fake_event!(DnsEvt, id = 3, source = "test", (".domain", "test.com"));
+        assert!(e.scan(&DnsEvt {}).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_mix_include_exclude_filter() {
+        // test that when include and exclude filters are
+        // specified we take only events in those
+        let mut e = Engine::new();
+        let r = rule!(
+            r#"
+---
+name: test
+params:
+    filter: true
+match-on:
+    events:
+        test: [ -1, 2 ]
+..."#
+        );
+
+        e.insert_rule(r).unwrap();
+        fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
+        assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
+
+        fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
+        assert!(e.scan(&PathEvt {}).unwrap().is_some());
+
+        // this has not been excluded but not included so it should
+        // not match
+        fake_event!(DnsEvt, id = 3, source = "test", (".domain", "test.com"));
+        assert_eq!(e.scan(&DnsEvt {}).unwrap(), None);
     }
 
     #[test]

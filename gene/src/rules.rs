@@ -151,9 +151,48 @@ impl Rule {
         self
     }
 
+    // build filter for events to include (positive values in
+    // `match-on` section)
+    fn build_include_events(
+        filters: &HashMap<String, HashSet<i64>>,
+    ) -> HashMap<String, HashSet<i64>> {
+        let mut inc = HashMap::new();
+        for (source, events) in filters {
+            let events = events
+                .iter()
+                .filter(|&&id| id >= 0)
+                .cloned()
+                .collect::<HashSet<i64>>();
+            if !events.is_empty() {
+                inc.insert(source.clone(), events);
+            }
+        }
+        inc
+    }
+
+    // build filter for events to exclude (negative values in
+    // `match-on` section)
+    fn build_exclude_events(
+        filters: &HashMap<String, HashSet<i64>>,
+    ) -> HashMap<String, HashSet<i64>> {
+        let mut excl = HashMap::new();
+        for (source, events) in filters {
+            let events = events
+                .iter()
+                .filter(|&&id| id < 0)
+                .map(|id| id.abs())
+                .collect::<HashSet<i64>>();
+            if !events.is_empty() {
+                excl.insert(source.clone(), events);
+            }
+        }
+        excl
+    }
+
     #[inline]
     pub fn compile_into(self) -> Result<CompiledRule, Error> {
         let name = self.name.clone();
+        let filters = self.match_on.and_then(|mo| mo.events).unwrap_or_default();
 
         // to wrap error with rule name
         || -> Result<CompiledRule, Error> {
@@ -162,7 +201,8 @@ impl Rule {
                 filter: self.params.and_then(|p| p.filter).unwrap_or_default(),
                 tags: HashSet::new(),
                 attack: HashSet::new(),
-                events: self.match_on.and_then(|mo| mo.events).unwrap_or_default(),
+                include_events: Self::build_include_events(&filters),
+                exclude_events: Self::build_exclude_events(&filters),
                 matches: HashMap::new(),
                 condition: match self.condition {
                     Some(cond) => {
@@ -221,7 +261,8 @@ pub struct CompiledRule {
     pub(crate) filter: bool,
     pub(crate) tags: HashSet<String>,
     pub(crate) attack: HashSet<String>,
-    pub(crate) events: HashMap<String, HashSet<i64>>,
+    pub(crate) include_events: HashMap<String, HashSet<i64>>,
+    pub(crate) exclude_events: HashMap<String, HashSet<i64>>,
     pub(crate) matches: HashMap<String, Match>,
     pub(crate) condition: condition::Condition,
     pub(crate) severity: u8,
@@ -271,17 +312,33 @@ impl CompiledRule {
 
     #[inline(always)]
     pub(crate) fn can_match_on(&self, src: &String, id: i64) -> bool {
-        if self.events.is_empty() {
+        // we have no filter at all
+        if self.include_events.is_empty() && self.exclude_events.is_empty() {
             return true;
         }
 
-        if let Some(set) = self.events.get(src) {
-            if set.is_empty() {
-                return true;
+        // explicit event excluding logic
+        let opt_exclude = self.exclude_events.get(src);
+        if let Some(exclude) = opt_exclude {
+            // we definitely want to exclude that event
+            if exclude.contains(&id) {
+                return false;
             }
-            return set.contains(&id);
         }
 
+        let opt_include = self.include_events.get(src);
+        // we include if we have no include filter for this source
+        // but we have an exclude filter (that didn't match)
+        if opt_include.is_none() && opt_exclude.is_some() {
+            return true;
+        }
+
+        // we return result of lookup in include filter if there is one
+        if let Some(include) = opt_include {
+            return include.contains(&id);
+        }
+
+        // default we cannot match on event
         false
     }
 
@@ -476,10 +533,6 @@ condition: $c
         let test = r#"
 ---
 name: test
-match-on:
-    events:
-        test: [42]
-condition:
 ..."#;
 
         let d: Rule = serde_yaml::from_str(test).unwrap();
