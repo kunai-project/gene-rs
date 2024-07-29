@@ -873,7 +873,7 @@ meta:
 name: HeurLongDomain
 params:
   filter: false
-  disable: false
+  disable: true
 match-on:
   events:
     Microsoft-Windows-DNS-Client/Operational: []
@@ -1785,7 +1785,7 @@ actions: null
 name: PSC#Win32API
 params:
   filter: false
-  disable: false
+  disable: true
 match-on:
   events:
     Microsoft-Windows-PowerShell/Operational: []
@@ -2206,7 +2206,7 @@ meta:
 name: SuspWriteAccess
 params:
   filter: false
-  disable: false
+  disable: true
 match-on:
   events:
     Microsoft-Windows-Sysmon/Operational:
@@ -2691,7 +2691,7 @@ meta:
 name: UnknownServices
 params:
   filter: false
-  disable: false
+  disable: true
 match-on:
   events:
     Microsoft-Windows-Sysmon/Operational:

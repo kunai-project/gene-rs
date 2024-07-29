@@ -7,7 +7,7 @@ use std::{
 
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum NumberError {
     #[error("")]
     InvalidConvertion,

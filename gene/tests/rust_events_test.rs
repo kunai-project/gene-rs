@@ -76,7 +76,7 @@ fn test_fast() {
         let scan_dur = time_it(|| {
             for _ in 0..run_count {
                 for e in events.iter() {
-                    if let Some(sr) = engine.scan(e).ok().and_then(|v| v) {
+                    if let Some(sr) = engine.scan(e).unwrap_or_default() {
                         if sr.is_detection() {
                             positives += 1
                         }
