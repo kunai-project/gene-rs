@@ -87,8 +87,11 @@ fn time_it<F: FnMut()>(mut f: F) -> Duration {
     end_time - start_time
 }
 
+#[cfg_attr(
+    debug_assertions,
+    ignore = "long test that must be ran in release mode"
+)]
 #[test]
-#[ignore = "long test that must be ran in release mode"]
 fn test_engine() {
     let mut engine = Engine::new();
     let rules = Rule::deserialize_reader(File::open("./tests/data/compiled.gen").unwrap());

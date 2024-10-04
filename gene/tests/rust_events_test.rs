@@ -46,8 +46,11 @@ fn time_it<F: FnMut()>(mut f: F) -> Duration {
     end_time - start_time
 }
 
+#[cfg_attr(
+    debug_assertions,
+    ignore = "long test that must be ran in release mode"
+)]
 #[test]
-#[ignore = "long test that must be ran in release mode"]
 fn test_fast() {
     let rules = Rule::deserialize_reader(File::open("./tests/data/compiled.gen").unwrap());
     let it = rules.into_iter().map(|r| r.unwrap()).collect::<Vec<Rule>>();
