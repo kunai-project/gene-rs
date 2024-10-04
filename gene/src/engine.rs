@@ -59,16 +59,22 @@ impl ScanResult {
             self.rules.insert(r.name.clone());
 
             // updating tags info
-            self.tags = r.tags.union(&self.tags).cloned().collect();
+            if !r.tags.is_empty() {
+                self.tags = r.tags.union(&self.tags).cloned().collect();
+            }
 
             // updating attack info
-            self.attack = r.attack.union(&self.attack).cloned().collect();
-
-            // we update actions
-            self.actions = r.actions.union(&self.actions).cloned().collect();
+            if !r.attack.is_empty() {
+                self.attack = r.attack.union(&self.attack).cloned().collect();
+            }
 
             // we bound the severity of an event
             self.severity = bound_severity(self.severity + r.severity);
+        }
+
+        // we update actions
+        if !r.actions.is_empty() {
+            self.actions = r.actions.union(&self.actions).cloned().collect();
         }
 
         self.filtered |= r.is_filter();
@@ -398,8 +404,8 @@ actions: ["do_something"]
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         // filter matches should not be put in matches
         assert!(!sr.rules.contains("test"));
-        // actions are not taken in action
-        assert!(!sr.contains_action("do_something"));
+        // actions should be propagated even if it is a filter
+        assert!(sr.contains_action("do_something"));
         assert!(!sr.is_empty());
         assert!(sr.is_filtered());
         assert!(sr.is_only_filter());
