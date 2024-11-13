@@ -9,7 +9,12 @@ repository.workspace = true
 license.workspace = true
 readme.workspace = true
 documentation = "https://docs.rs/gene"
-keywords = ["log-processing", "signature-engine", "security", "threat-detection"]
+keywords = [
+    "log-processing",
+    "signature-engine",
+    "security",
+    "threat-detection",
+]
 
 [dependencies]
 gene_derive = { path = "../derive", version = ">=0.1.0" }
@@ -24,3 +29,8 @@ serde = { version = "1.0.192", features = ["derive"] }
 [dev-dependencies]
 serde_json = "1.0.108"
 libflate = "2.0.0"
+criterion = "0.5.1"
+
+[[bench]]
+name = "engine_benchmark"
+harness = false
