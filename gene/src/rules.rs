@@ -311,14 +311,14 @@ impl CompiledRule {
     }
 
     #[inline(always)]
-    pub(crate) fn can_match_on(&self, src: &String, id: i64) -> bool {
+    pub(crate) fn can_match_on<S: AsRef<str>>(&self, src: S, id: i64) -> bool {
         // we have no filter at all
         if self.include_events.is_empty() && self.exclude_events.is_empty() {
             return true;
         }
 
         // explicit event excluding logic
-        let opt_exclude = self.exclude_events.get(src);
+        let opt_exclude = self.exclude_events.get(src.as_ref());
         if let Some(exclude) = opt_exclude {
             // we definitely want to exclude that event
             if exclude.contains(&id) {
@@ -326,7 +326,7 @@ impl CompiledRule {
             }
         }
 
-        let opt_include = self.include_events.get(src);
+        let opt_include = self.include_events.get(src.as_ref());
         // we include if we have no include filter for this source
         // but we have an exclude filter (that didn't match)
         if opt_include.is_none() && opt_exclude.is_some() {
