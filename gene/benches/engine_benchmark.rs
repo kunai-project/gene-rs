@@ -1,5 +1,10 @@
-use std::{borrow::Cow, collections::HashMap, fs::File, io::Read, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    io::{self, Read},
+};
 
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use gene::{Engine, Event, FieldGetter, FieldValue, Rule};
 use gene_derive::{Event, FieldGetter};
 use libflate::gzip;
@@ -39,24 +44,16 @@ struct WinEvent {
     event: Inner,
 }
 
-fn time_it<F: FnMut()>(mut f: F) -> Duration {
-    let start_time = std::time::Instant::now();
-    f();
-    let end_time = std::time::Instant::now();
-    end_time - start_time
-}
+const RULES: &[u8] = include_bytes!("./data/compiled.gen");
+const EVENTS: &[u8] = include_bytes!("./data/events.json.gz");
 
-#[cfg_attr(
-    debug_assertions,
-    ignore = "long test that must be ran in release mode"
-)]
-#[test]
-fn test_fast() {
-    let rules = Rule::deserialize_reader(File::open("./tests/data/compiled.gen").unwrap());
+fn bench_rust_events(c: &mut Criterion) {
+    let rules = Rule::deserialize_reader(io::Cursor::new(RULES));
+
     let it = rules.into_iter().map(|r| r.unwrap()).collect::<Vec<Rule>>();
 
     // decoding gzip file
-    let mut dec = gzip::Decoder::new(File::open("./tests/data/events.json.gz").unwrap()).unwrap();
+    let mut dec = gzip::Decoder::new(io::Cursor::new(EVENTS)).unwrap();
     let mut all = vec![];
     dec.read_to_end(&mut all).unwrap();
 
@@ -65,39 +62,28 @@ fn test_fast() {
         .map(|e| e.unwrap())
         .collect::<Vec<WinEvent>>();
 
-    let run_count = 5;
-
     let mut engine = Engine::new();
-    for i in 0..8 {
+
+    let mut group = c.benchmark_group("scan-throughput");
+    group.sample_size(20);
+    group.throughput(Throughput::Bytes(all.len() as u64));
+    for i in 0..1 {
         for r in it.iter() {
             let mut r = r.clone();
             r.name = format!("{}.{}", r.name, i);
             engine.insert_rule(r).unwrap();
         }
 
-        let mut positives = 0;
-        let scan_dur = time_it(|| {
-            for _ in 0..run_count {
+        group.bench_function(&format!("scan-with-{}-rules", engine.rules_count()), |b| {
+            b.iter(|| {
                 for e in events.iter() {
-                    if let Some(sr) = engine.scan(e).unwrap_or_default() {
-                        if sr.is_detection() {
-                            positives += 1
-                        }
-                    }
+                    let _ = engine.scan(e);
                 }
-            }
+            })
         });
-
-        let events_count = events.len() * run_count;
-        let mb = (all.len() * run_count) as f64 / 1_000_000_f64;
-        let mbs = mb / (scan_dur.as_secs_f64());
-        let eps = (events_count as f64) / scan_dur.as_secs_f64();
-
-        println!("Number of scanned events: {events_count} -> {mb:.2} MB");
-        println!("Number of loaded rules: {}", engine.rules_count());
-        println!("Scan duration: {scan_dur:?} -> {mbs:.2} MB/s -> {eps:.2} events/s",);
-        println!("Number of detections: {positives}");
-        assert!(positives > 0);
-        println!();
     }
+    group.finish();
 }
+
+criterion_group!(benches, bench_rust_events);
+criterion_main!(benches);
