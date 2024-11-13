@@ -847,8 +847,8 @@ condition: none of them
 ---
 name: test
 matches:
-    $ip: .ip == "8.8.4.4"
-    $ip: .ip ~= "^8\.8\."
+    $ip1: .ip == "8.8.4.4"
+    $ip2: .ip ~= "^8\.8\."
 condition: none of $ip
 ..."#;
 
