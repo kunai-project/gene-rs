@@ -370,6 +370,12 @@ impl Engine {
                     // we match every dependency of the rule first
                     for &r_i in deps.iter() {
                         if let Some(r) = self.rules.get(r_i) {
+                            // we don't need to compute rule again
+                            // NB: rule might be used in several places and already computed
+                            if states.contains_key(&r.name) {
+                                continue;
+                            }
+
                             match r
                                 .match_event_with_states(event, &states)
                                 .map_err(Error::from)
