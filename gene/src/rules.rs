@@ -16,6 +16,9 @@ mod condition;
 // used to parse path
 pub(crate) mod matcher;
 
+mod map;
+pub use map::MatchHashMap;
+
 pub const MAX_SEVERITY: u8 = 10;
 
 pub(crate) fn bound_severity(sev: u8) -> u8 {
@@ -110,7 +113,7 @@ pub struct Rule {
     #[serde(rename = "match-on")]
     pub match_on: Option<MatchOn>,
     /// matches
-    pub matches: Option<HashMap<String, String>>,
+    pub matches: Option<MatchHashMap<String, String>>,
     /// rule triggering condition
     pub condition: Option<String>,
     /// severity given to the events matching the rule
@@ -231,13 +234,13 @@ impl Rule {
 
             // initializing operands
             if let Some(matches) = self.matches {
-                for (operand, m) in matches {
+                for (operand, m) in matches.iter() {
                     if !operand.starts_with('$') {
                         return Err(Error::Compile(format!(
                             "operand must start with $, try with ${operand}"
                         )));
                     }
-                    c.matches.insert(operand, Match::from_str(&m)?);
+                    c.matches.insert(operand.clone(), Match::from_str(m)?);
                 }
             }
 
@@ -866,5 +869,19 @@ condition: none of $ip
         };
 
         assert_eq!(cr.match_event(&event), Ok(true));
+    }
+
+    #[test]
+    fn test_deserialization_error() {
+        let test = r#"
+---
+name: test
+matches:
+    $ip: .ip == "8.8.4.4"
+    $ip: .ip ~= "^8\.8\."
+condition: none of $ip
+..."#;
+
+        assert!(serde_yaml::from_str::<Rule>(test).is_err());
     }
 }

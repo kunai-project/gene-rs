@@ -1,3 +1,5 @@
+#![deny(unused_imports)]
+
 mod event;
 pub use event::{Event, FieldGetter};
 
