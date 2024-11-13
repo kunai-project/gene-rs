@@ -61,6 +61,7 @@ pub(crate) enum MatchValue {
     Number(Number),
     StringOrNumber(String, Number),
     Regex(Regex),
+    Bool(bool),
     Some,
     None,
 }
@@ -72,6 +73,7 @@ impl MatchValue {
             Self::Number(_) => "number",
             Self::StringOrNumber(_, _) => "string_or_number",
             Self::Regex(_) => "regex",
+            Self::Bool(_) => "bool",
             Self::Some => "some",
             Self::None => "none",
         }
@@ -226,11 +228,13 @@ impl FromStr for DirectMatch {
 
         let rule_op = inner_pairs.next().unwrap().as_rule();
 
-        // easier to trim quotes here rather than walking parsed items
         let str_value = inner_pairs.next().unwrap().as_str();
         let is_none = str_value == "none";
         let is_some = str_value == "some";
+        let is_bool_true = str_value.to_lowercase() == "true";
+        let is_bool_false = str_value.to_lowercase() == "false";
 
+        // easier to trim quotes here rather than walking parsed items
         let sanit_value = str_value.trim_matches('\'').trim_matches('"');
 
         let (op, value) = match rule_op {
@@ -239,6 +243,10 @@ impl FromStr for DirectMatch {
                     MatchValue::None
                 } else if is_some {
                     MatchValue::Some
+                } else if is_bool_true {
+                    MatchValue::Bool(true)
+                } else if is_bool_false {
+                    MatchValue::Bool(false)
                 } else if let Ok(i) = Number::from_str(sanit_value) {
                     // handle the case where string can also be an
                     // integer. Number::from_str manages hex prefix
@@ -277,6 +285,7 @@ macro_rules! cmp_values {
 }
 
 impl DirectMatch {
+    #[inline]
     pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
         if let Some(fvalue) = event.get_from_path(&self.field_path) {
             return self
@@ -292,6 +301,7 @@ impl DirectMatch {
         ))
     }
 
+    #[inline]
     pub(crate) fn match_value(&self, tgt: &FieldValue) -> Result<bool, ()> {
         // we handle a special case where we expect to match a number and the field is a string
         // in this case we attempt to convert the string value into a number. Mostly because
@@ -329,6 +339,13 @@ impl DirectMatch {
                         (&fv, &(self.value))
                     {
                         Ok(n == v)
+                    } else {
+                        Err(())
+                    },
+                )
+                .or(
+                    if let (FieldValue::Bool(fvb), MatchValue::Bool(mvb)) = (&fv, &(self.value)) {
+                        Ok(fvb == mvb)
                     } else {
                         Err(())
                     },
@@ -429,6 +446,16 @@ mod test {
         assert!(!DirectMatch::from_str(r#".data is some"#)
             .unwrap()
             .match_value(&FieldValue::None)
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data is true"#)
+            .unwrap()
+            .match_value(&FieldValue::Bool(true))
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data is false"#)
+            .unwrap()
+            .match_value(&FieldValue::Bool(false))
             .unwrap());
 
         // we try to match None against a string so we must return an error
