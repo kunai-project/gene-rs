@@ -360,21 +360,25 @@ impl Engine {
         let mut states = HashMap::with_capacity(i_rules.len());
 
         for i in i_rules {
+            // this is equivalent to an OOB error but this should not happen
             let r = self.rules.get(i).unwrap();
 
-            // there are some dependent rules to match against
             if !r.depends.is_empty() {
-                // we match every dependency of the rule first
-                for &r_i in self.deps_cache.get(&i).unwrap().iter() {
-                    if let Some(r) = self.rules.get(r_i) {
-                        match r
-                            .match_event_with_states(event, &states)
-                            .map_err(Error::from)
-                        {
-                            Ok(ok) => {
-                                states.insert(r.name.clone(), ok);
+                debug_assert!(self.deps_cache.contains_key(&i));
+                // there are some dependent rules to match against
+                if let Some(deps) = self.deps_cache.get(&i) {
+                    // we match every dependency of the rule first
+                    for &r_i in deps.iter() {
+                        if let Some(r) = self.rules.get(r_i) {
+                            match r
+                                .match_event_with_states(event, &states)
+                                .map_err(Error::from)
+                            {
+                                Ok(ok) => {
+                                    states.insert(r.name.clone(), ok);
+                                }
+                                Err(e) => last_err = Some(e),
                             }
-                            Err(e) => last_err = Some(e),
                         }
                     }
                 }
@@ -400,10 +404,7 @@ impl Engine {
 
             // we process scan result
             if ok {
-                if sr.is_none() {
-                    sr = Some(ScanResult::new())
-                }
-                sr.as_mut().unwrap().update(r)
+                sr.get_or_insert(ScanResult::new()).update(r);
             }
         }
 
