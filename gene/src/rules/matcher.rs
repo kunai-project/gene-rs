@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use pest::{iterators::Pairs, Parser};
 use pest_derive::Parser;
@@ -101,6 +101,8 @@ impl MatchValue {
 
 #[derive(Error, Debug, PartialEq)]
 pub enum Error {
+    #[error("rule={0} not found")]
+    RuleNotFound(String),
     #[error("field={0} not found")]
     FieldNotFound(String),
     #[error("incompatible types field={path} expect={expect} got={got}")]
@@ -122,8 +124,14 @@ pub enum Error {
 }
 
 impl Error {
+    #[inline(always)]
     fn parser<S: AsRef<str>>(s: S) -> Self {
         Self::Parser(s.as_ref().into())
+    }
+
+    #[inline(always)]
+    fn rule_not_found<S: AsRef<str>>(s: S) -> Self {
+        Self::RuleNotFound(s.as_ref().into())
     }
 }
 
@@ -172,11 +180,16 @@ impl FromStr for Match {
 }
 
 impl Match {
-    pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
+    #[inline]
+    pub(crate) fn match_event<E: Event>(
+        &self,
+        event: &E,
+        rule_state: &HashMap<String, bool>,
+    ) -> Result<bool, Error> {
         match self {
             Self::Direct(m) => m.match_event(event),
             Self::Indirect(m) => m.match_event(event),
-            Self::Rule(m) => m.match_event(event),
+            Self::Rule(m) => m.match_event(rule_state),
         }
     }
 }
@@ -436,8 +449,16 @@ impl RuleMatch {
     }
 
     #[inline]
-    pub(crate) fn match_event<E: Event>(&self, _event: &E) -> Result<bool, Error> {
-        Ok(true)
+    pub(crate) fn match_event(&self, states: &HashMap<String, bool>) -> Result<bool, Error> {
+        states
+            .get(&self.0)
+            .copied()
+            .ok_or(Error::rule_not_found(&self.0))
+    }
+
+    #[inline(always)]
+    pub(crate) fn rule_name(&self) -> &str {
+        &self.0
     }
 }
 
@@ -565,12 +586,12 @@ mod test {
         }
 
         assert_eq!(
-            as_rule_match(MatchParser::parse_input("rule::test").unwrap()),
+            as_rule_match(MatchParser::parse_input("rule(test)").unwrap()),
             RuleMatch("test".into())
         );
 
         assert_eq!(
-            as_rule_match(MatchParser::parse_input("rule::blip.blop").unwrap()),
+            as_rule_match(MatchParser::parse_input("rule(blip.blop)").unwrap()),
             RuleMatch("blip.blop".into())
         )
     }

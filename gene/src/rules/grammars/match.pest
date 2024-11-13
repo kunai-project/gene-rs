@@ -26,7 +26,7 @@ indirect_match      =  { SOI ~ field_path ~ eq ~ indirect_field_path ~ EOI }
 
 // rule match
 rule_name  = { (ASCII_ALPHANUMERIC | "." | "_" | "-")+ }
-rule_match = { SOI ~ "rule::" ~ rule_name }
+rule_match = { SOI ~ "rule(" ~ rule_name ~ ")" }
 
 // matcher
 matcher = { direct_match | indirect_match | rule_match }

@@ -105,7 +105,6 @@ pub struct MatchOn {
 pub struct Rule {
     /// name fo the rule
     pub name: String,
-    pub requires: Option<HashSet<String>>,
     /// rule's metadata
     pub meta: Option<Meta>,
     /// miscellaneous parameters
@@ -202,7 +201,7 @@ impl Rule {
         || -> Result<CompiledRule, Error> {
             let mut c = CompiledRule {
                 name: self.name,
-                requires: self.requires.unwrap_or_default(),
+                depends: HashSet::new(),
                 filter: self.params.and_then(|p| p.filter).unwrap_or_default(),
                 tags: HashSet::new(),
                 attack: HashSet::new(),
@@ -236,13 +235,18 @@ impl Rule {
 
             // initializing operands
             if let Some(matches) = self.matches {
-                for (operand, m) in matches.iter() {
+                for (operand, s) in matches.iter() {
                     if !operand.starts_with('$') {
                         return Err(Error::Compile(format!(
                             "operand must start with $, try with ${operand}"
                         )));
                     }
-                    c.matches.insert(operand.clone(), Match::from_str(m)?);
+                    let m = Match::from_str(s)?;
+                    // we update the list of dependent rules
+                    if let Match::Rule(r) = &m {
+                        c.depends.insert(r.rule_name().into());
+                    }
+                    c.matches.insert(operand.clone(), m);
                 }
             }
 
@@ -263,7 +267,7 @@ impl FromStr for Rule {
 #[derive(Debug, Default, Clone)]
 pub struct CompiledRule {
     pub(crate) name: String,
-    pub(crate) requires: HashSet<String>,
+    pub(crate) depends: HashSet<String>,
     pub(crate) filter: bool,
     pub(crate) tags: HashSet<String>,
     pub(crate) attack: HashSet<String>,
@@ -308,10 +312,24 @@ impl TryFrom<Rule> for CompiledRule {
 }
 
 impl CompiledRule {
+    // keep this function not to break tests
+    #[allow(dead_code)]
     #[inline(always)]
-    pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
+    fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
         self.condition
-            .compute_for_event(&self.matches, event)
+            .compute_for_event(event, &self.matches, &HashMap::new())
+            .map_err(|e| Box::new(e).into())
+            .map_err(|e: Error| e.wrap(self.name.clone()))
+    }
+
+    #[inline(always)]
+    pub(crate) fn match_event_with_states<E: Event>(
+        &self,
+        event: &E,
+        rules_states: &HashMap<String, bool>,
+    ) -> Result<bool, Error> {
+        self.condition
+            .compute_for_event(event, &self.matches, rules_states)
             .map_err(|e| Box::new(e).into())
             .map_err(|e: Error| e.wrap(self.name.clone()))
     }

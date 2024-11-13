@@ -127,8 +127,10 @@ impl ScanResult {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("duplicate rule name={0}")]
+    #[error("duplicate rule={0}")]
     DuplicateRule(String),
+    #[error("unknown rule dependency in rule={0}")]
+    UnknownRuleDependency(String),
     #[error("{0}")]
     Deserialize(#[from] serde_yaml::Error),
     #[error("{0}")]
@@ -205,9 +207,18 @@ pub enum Error {
 /// ```
 #[derive(Debug, Default)]
 pub struct Engine {
+    // rule names mapping to rule index in rules member
     names: HashMap<String, usize>,
+    // all the rules in the engine
     rules: Vec<CompiledRule>,
-    cache: HashMap<(String, i64), Vec<usize>>,
+    // cache the list of rules indexes to match a given (source, id)
+    // key: (source, event_id)
+    // value: vector of rule indexes
+    rules_cache: HashMap<(String, i64), Vec<usize>>,
+    // cache rules dependencies
+    // key: rule index
+    // value: vector of dependency indexes
+    deps_cache: HashMap<usize, Vec<usize>>,
 }
 
 impl Engine {
@@ -230,11 +241,31 @@ impl Engine {
         }
         // we need to be sure nothing can fail beyound this point
         let compiled: CompiledRule = r.try_into()?;
+        let has_deps = !compiled.depends.is_empty();
 
-        self.names.insert(compiled.name.clone(), self.rules.len());
+        // we verify that all rules we depend on are known
+        // the fact tha rule dependencies must be known makes
+        // circular references impossible
+        for dep in compiled.depends.iter() {
+            self.names
+                .get(dep)
+                .ok_or(Error::UnknownRuleDependency(dep.clone()))?;
+        }
+
+        // this is the index the rule is going to be inserted at
+        let rule_idx = self.rules.len();
+        self.names.insert(compiled.name.clone(), rule_idx);
         self.rules.push(compiled);
+
+        // since we know all the dependent rules are there, we can cache
+        // the list of dependencies and we never need to compute it again
+        if has_deps {
+            self.deps_cache
+                .insert(rule_idx, self.dfs_dep_search(rule_idx));
+        }
+
         // cache becomes outdated
-        self.cache.clear();
+        self.rules_cache.clear();
 
         Ok(())
     }
@@ -259,7 +290,7 @@ impl Engine {
     fn cached_rules(&mut self, src: String, id: i64) -> Vec<usize> {
         let key = (src, id);
         let mut tmp = BTreeMap::new();
-        if !self.cache.contains_key(&key) {
+        if !self.rules_cache.contains_key(&key) {
             for (i, r) in self.rules.iter().enumerate() {
                 if r.can_match_on(&key.0, id) {
                     tmp.insert((r.severity, r.name.clone()), i);
@@ -267,7 +298,7 @@ impl Engine {
             }
         }
 
-        self.cache
+        self.rules_cache
             .entry(key)
             .or_insert(tmp.values().rev().cloned().collect())
             .to_vec()
@@ -285,23 +316,33 @@ impl Engine {
         self.rules.is_empty()
     }
 
-    /// finds recursively all the rules requirements
+    /// Dfs recursive dependency finding
+    /// There is no check for circular references as those are impossibele
+    /// due to the fact that a rule cannot depend on a non existing rule.
     #[inline(always)]
-    fn rule_requirements(&self, r: &CompiledRule) -> HashSet<usize> {
-        fn rule_requirements_rec(eng: &Engine, r: &CompiledRule, req: &mut HashSet<usize>) {
-            for req_name in r.requires.iter() {
+    fn dfs_dep_search(&self, rule_idx: usize) -> Vec<usize> {
+        // recursive function
+        fn rule_requirements_rec(
+            eng: &Engine,
+            rule_idx: usize,
+            dfs: &mut Vec<usize>,
+            mark: &mut HashSet<usize>,
+        ) {
+            for req_name in eng.rules[rule_idx].depends.iter() {
                 if let Some(&dep) = eng.names.get(req_name) {
-                    if !req.contains(&dep) {
-                        rule_requirements_rec(eng, eng.rules.get(dep).unwrap(), req);
-                        req.insert(dep);
+                    rule_requirements_rec(eng, dep, dfs, mark);
+                    if !mark.contains(&dep) {
+                        dfs.push(dep);
+                        mark.insert(dep);
                     }
                 }
             }
         }
 
         let mut req = HashSet::new();
-        rule_requirements_rec(self, r, &mut req);
-        req
+        let mut dfs = Vec::new();
+        rule_requirements_rec(self, rule_idx, &mut dfs, &mut req);
+        dfs
     }
 
     /// scan an [Event] with all the rules loaded in the [Engine]
@@ -316,28 +357,22 @@ impl Engine {
         let id = event.id();
 
         let i_rules = self.cached_rules(src.into(), id);
-        // satisfy requirements
-        let mut satisfy_req = true;
         let mut states = HashMap::with_capacity(i_rules.len());
 
         for i in i_rules {
             let r = self.rules.get(i).unwrap();
 
-            if !r.requires.is_empty() {
-                for &r_i in self.rule_requirements(r).iter() {
+            // there are some dependent rules to match against
+            if !r.depends.is_empty() {
+                // we match every dependency of the rule first
+                for &r_i in self.deps_cache.get(&i).unwrap().iter() {
                     if let Some(r) = self.rules.get(r_i) {
-                        match r.match_event(event).map_err(Error::from) {
+                        match r
+                            .match_event_with_states(event, &states)
+                            .map_err(Error::from)
+                        {
                             Ok(ok) => {
-                                states.insert(r_i, ok);
-                                if ok {
-                                    if sr.is_none() {
-                                        sr = Some(ScanResult::new())
-                                    }
-                                    sr.as_mut().unwrap().update(r)
-                                } else {
-                                    satisfy_req = false;
-                                    break;
-                                }
+                                states.insert(r.name.clone(), ok);
                             }
                             Err(e) => last_err = Some(e),
                         }
@@ -345,28 +380,31 @@ impl Engine {
                 }
             }
 
-            // if requirements are not satisfied we do not
-            // continue with the rest of the rule
-            if !satisfy_req {
-                continue;
-            }
-
-            // no need to match that rule again
-            if states.get(&i).is_some() {
-                continue;
-            }
-
-            match r.match_event(event).map_err(Error::from) {
-                Ok(ok) => {
-                    if ok {
-                        if sr.is_none() {
-                            sr = Some(ScanResult::new())
+            // if the rule has already been matched in the process
+            // of dependency matching of whatever rule
+            let ok = match states.get(&r.name) {
+                Some(&ok) => ok,
+                None => {
+                    match r
+                        .match_event_with_states(event, &states)
+                        .map_err(Error::from)
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            last_err = Some(e);
+                            false
                         }
-                        sr.as_mut().unwrap().update(r)
                     }
                 }
-                Err(e) => last_err = Some(e),
             };
+
+            // we process scan result
+            if ok {
+                if sr.is_none() {
+                    sr = Some(ScanResult::new())
+                }
+                sr.as_mut().unwrap().update(r)
+            }
         }
 
         if let Some(err) = last_err {
@@ -708,10 +746,34 @@ condition: any of them
         e.insert_rule(rule!(
             r#"
 name: depends
-requires: [ required.rule ]
+matches:
+    $dep1: rule(required.rule)
+condition: all of them
 "#
         ))
         .unwrap();
+
+        e.insert_rule(rule!(
+            r#"
+name: multi.deps
+matches:
+    $dep1: rule(required.rule)
+    $dep2: rule(depends)
+    $dep3: rule(required.rule)
+    $dep4: rule(required.rule)
+condition: all of them
+"#
+        ))
+        .unwrap();
+
+        // we check the dep cache is correct
+        assert_eq!(
+            e.deps_cache
+                .get(e.names.get("multi.deps").unwrap())
+                .unwrap()
+                .len(),
+            2
+        );
 
         e.insert_rule(rule!(
             r#"
