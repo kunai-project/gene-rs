@@ -105,6 +105,7 @@ pub struct MatchOn {
 pub struct Rule {
     /// name fo the rule
     pub name: String,
+    pub requires: Option<HashSet<String>>,
     /// rule's metadata
     pub meta: Option<Meta>,
     /// miscellaneous parameters
@@ -201,6 +202,7 @@ impl Rule {
         || -> Result<CompiledRule, Error> {
             let mut c = CompiledRule {
                 name: self.name,
+                requires: self.requires.unwrap_or_default(),
                 filter: self.params.and_then(|p| p.filter).unwrap_or_default(),
                 tags: HashSet::new(),
                 attack: HashSet::new(),
@@ -261,6 +263,7 @@ impl FromStr for Rule {
 #[derive(Debug, Default, Clone)]
 pub struct CompiledRule {
     pub(crate) name: String,
+    pub(crate) requires: HashSet<String>,
     pub(crate) filter: bool,
     pub(crate) tags: HashSet<String>,
     pub(crate) attack: HashSet<String>,

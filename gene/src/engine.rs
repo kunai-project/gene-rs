@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io,
 };
 
@@ -258,15 +258,19 @@ impl Engine {
     #[inline(always)]
     fn cached_rules(&mut self, src: String, id: i64) -> Vec<usize> {
         let key = (src, id);
-        let mut tmp = vec![];
+        let mut tmp = BTreeMap::new();
         if !self.cache.contains_key(&key) {
             for (i, r) in self.rules.iter().enumerate() {
                 if r.can_match_on(&key.0, id) {
-                    tmp.push(i)
+                    tmp.insert((r.severity, r.name.clone()), i);
                 }
             }
         }
-        self.cache.entry(key).or_insert(tmp).to_vec()
+
+        self.cache
+            .entry(key)
+            .or_insert(tmp.values().rev().cloned().collect())
+            .to_vec()
     }
 
     /// returns the number of rules loaded in the engine
@@ -281,6 +285,25 @@ impl Engine {
         self.rules.is_empty()
     }
 
+    /// finds recursively all the rules requirements
+    #[inline(always)]
+    fn rule_requirements(&self, r: &CompiledRule) -> HashSet<usize> {
+        fn rule_requirements_rec(eng: &Engine, r: &CompiledRule, req: &mut HashSet<usize>) {
+            for req_name in r.requires.iter() {
+                if let Some(&dep) = eng.names.get(req_name) {
+                    if !req.contains(&dep) {
+                        rule_requirements_rec(eng, eng.rules.get(dep).unwrap(), req);
+                        req.insert(dep);
+                    }
+                }
+            }
+        }
+
+        let mut req = HashSet::new();
+        rule_requirements_rec(self, r, &mut req);
+        req
+    }
+
     /// scan an [Event] with all the rules loaded in the [Engine]
     pub fn scan<E: Event>(
         &mut self,
@@ -293,9 +316,46 @@ impl Engine {
         let id = event.id();
 
         let i_rules = self.cached_rules(src.into(), id);
-        let iter = i_rules.iter().map(|&i| self.rules.get(i).unwrap());
+        // satisfy requirements
+        let mut satisfy_req = true;
+        let mut states = HashMap::with_capacity(i_rules.len());
 
-        for r in iter {
+        for i in i_rules {
+            let r = self.rules.get(i).unwrap();
+
+            if !r.requires.is_empty() {
+                for &r_i in self.rule_requirements(r).iter() {
+                    if let Some(r) = self.rules.get(r_i) {
+                        match r.match_event(event).map_err(Error::from) {
+                            Ok(ok) => {
+                                states.insert(r_i, ok);
+                                if ok {
+                                    if sr.is_none() {
+                                        sr = Some(ScanResult::new())
+                                    }
+                                    sr.as_mut().unwrap().update(r)
+                                } else {
+                                    satisfy_req = false;
+                                    break;
+                                }
+                            }
+                            Err(e) => last_err = Some(e),
+                        }
+                    }
+                }
+            }
+
+            // if requirements are not satisfied we do not
+            // continue with the rest of the rule
+            if !satisfy_req {
+                continue;
+            }
+
+            // no need to match that rule again
+            if states.get(&i).is_some() {
+                continue;
+            }
+
             match r.match_event(event).map_err(Error::from) {
                 Ok(ok) => {
                     if ok {
@@ -629,5 +689,47 @@ match-on:
         assert!(sr.rules.contains("detect.t4343"));
         assert!(sr.contains_attack_id("t4242"));
         assert!(sr.contains_attack_id("t4343"));
+    }
+
+    #[test]
+    fn test_cached_rule_order() {
+        let mut e = Engine::new();
+
+        e.insert_rule(rule!(
+            r#"
+name: required.rule
+matches:
+    $ip: .ip == '8.8.4.4'
+condition: any of them
+"#
+        ))
+        .unwrap();
+
+        e.insert_rule(rule!(
+            r#"
+name: depends
+requires: [ required.rule ]
+"#
+        ))
+        .unwrap();
+
+        e.insert_rule(rule!(
+            r#"
+name: match.all
+"#
+        ))
+        .unwrap();
+
+        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
+        let sr = e.scan(&Dummy {}).unwrap().unwrap();
+        assert!(sr.rules.contains("depends"));
+        assert!(sr.rules.contains("required.rule"));
+        assert!(sr.rules.contains("match.all"));
+
+        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
+        let sr = e.scan(&Dummy2 {}).unwrap().unwrap();
+        assert!(!sr.rules.contains("depends"));
+        assert!(!sr.rules.contains("required.rule"));
+        assert!(sr.rules.contains("match.all"));
     }
 }
