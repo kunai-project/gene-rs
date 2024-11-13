@@ -5,7 +5,7 @@ field_path      = ${ sep ~ ("\"" ~ segment_with_ws ~ "\"" | segment) ~ field_pat
 
 value_dq = _{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
 value_sq = _{ "'" ~ (!("'") ~ ANY)* ~ "'" }
-value    = @{ (value_dq | value_sq | "none" | "some") }
+value    = @{ (value_dq | value_sq | "none" | "some" | "true" | "false") }
 
 // the order in which operators are evaluated is important
 op   = _{ eq | lte | lt | gte | gt | rex | flag }
