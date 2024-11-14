@@ -3,7 +3,7 @@ use crate::Event;
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     io,
@@ -60,6 +60,76 @@ mod attack {
     }
 }
 
+/// Represents the type of [Rule]
+#[derive(Debug, Clone)]
+pub enum Type {
+    /// Use it to encode detection information.
+    /// Rule will be used to update [crate::ScanResult]
+    Detection,
+    /// Use this type for rules to filter in/out
+    /// events. Only `actions` section of the rule will
+    /// be used to update [crate::ScanResult].
+    Filter,
+    /// Use this type if the rule does not aim at being
+    /// matched directly but is always used as dependency.
+    /// Rule will NEVER be used to update [crate::ScanResult]
+    Dependency,
+}
+
+impl Type {
+    #[inline(always)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Detection => "detection",
+            Self::Filter => "filter",
+            Self::Dependency => "dependency",
+        }
+    }
+}
+
+impl Default for Type {
+    fn default() -> Self {
+        Self::Detection
+    }
+}
+
+#[derive(Debug, Error, Clone)]
+pub enum ParseTypeError {
+    #[error("unknown type: {0}")]
+    UnkwnownType(String),
+}
+
+impl FromStr for Type {
+    type Err = ParseTypeError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "detection" => Ok(Self::Detection),
+            "filter" => Ok(Self::Filter),
+            "dependency" => Ok(Self::Dependency),
+            _ => Err(ParseTypeError::UnkwnownType(s.into())),
+        }
+    }
+}
+
+impl Serialize for Type {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Type {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Self::from_str(&s).map_err(de::Error::custom)
+    }
+}
+
 /// Metadata attributes of a rule
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,8 +152,6 @@ pub struct Meta {
 pub struct Params {
     /// whether to disable the rule or not
     pub disable: Option<bool>,
-    /// whether the rule is considered as a filter
-    pub filter: Option<bool>,
 }
 
 /// Defines on which kind of events the rule must match
@@ -105,6 +173,8 @@ pub struct MatchOn {
 pub struct Rule {
     /// name fo the rule
     pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Option<Type>,
     /// rule's metadata
     pub meta: Option<Meta>,
     /// miscellaneous parameters
@@ -201,8 +271,8 @@ impl Rule {
         || -> Result<CompiledRule, Error> {
             let mut c = CompiledRule {
                 name: self.name,
+                ty: self.ty.unwrap_or_default(),
                 depends: HashSet::new(),
-                filter: self.params.and_then(|p| p.filter).unwrap_or_default(),
                 tags: HashSet::new(),
                 attack: HashSet::new(),
                 include_events: Self::build_include_events(&filters),
@@ -267,8 +337,8 @@ impl FromStr for Rule {
 #[derive(Debug, Default, Clone)]
 pub struct CompiledRule {
     pub(crate) name: String,
+    pub(crate) ty: Type,
     pub(crate) depends: HashSet<String>,
-    pub(crate) filter: bool,
     pub(crate) tags: HashSet<String>,
     pub(crate) attack: HashSet<String>,
     pub(crate) include_events: HashMap<String, HashSet<i64>>,
@@ -368,7 +438,12 @@ impl CompiledRule {
 
     #[inline(always)]
     pub(crate) fn is_filter(&self) -> bool {
-        self.filter
+        matches!(self.ty, Type::Filter)
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_detection(&self) -> bool {
+        matches!(self.ty, Type::Detection)
     }
 }
 
