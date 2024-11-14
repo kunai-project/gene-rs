@@ -1,7 +1,7 @@
 use super::matcher::{self, Match};
 use crate::Event;
 use pest::{iterators::Pairs, pratt_parser::PrattParser, Parser};
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, hash::Hash, str::FromStr};
 use thiserror::Error;
 
 #[derive(pest_derive::Parser)]
@@ -85,13 +85,14 @@ impl Expr {
     #[inline]
     fn compute_for_event<E: Event>(
         &self,
-        operands: &HashMap<String, Match>,
         event: &E,
+        operands: &HashMap<String, Match>,
+        rule_states: &HashMap<String, bool>,
     ) -> Result<bool, Error> {
         match self {
             Expr::AllOfThem => {
                 for m in operands.values() {
-                    if !m.match_event(event)? {
+                    if !m.match_event(event, rule_states)? {
                         return Ok(false);
                     }
                 }
@@ -103,7 +104,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if !m.match_event(event)? {
+                    if !m.match_event(event, rule_states)? {
                         return Ok(false);
                     }
                 }
@@ -112,7 +113,7 @@ impl Expr {
             Expr::NOfThem(n) => {
                 let mut c = 0;
                 for m in operands.values() {
-                    if m.match_event(event)? {
+                    if m.match_event(event, rule_states)? {
                         c += 1;
                         if c >= *n {
                             return Ok(true);
@@ -128,7 +129,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if m.match_event(event)? {
+                    if m.match_event(event, rule_states)? {
                         c += 1;
                         if c >= *n {
                             return Ok(true);
@@ -139,7 +140,7 @@ impl Expr {
             }
             Expr::AnyOfThem => {
                 for m in operands.values() {
-                    if m.match_event(event)? {
+                    if m.match_event(event, rule_states)? {
                         return Ok(true);
                     }
                 }
@@ -151,7 +152,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if m.match_event(event)? {
+                    if m.match_event(event, rule_states)? {
                         return Ok(true);
                     }
                 }
@@ -159,7 +160,7 @@ impl Expr {
             }
             Expr::NoneOfThem => {
                 for m in operands.values() {
-                    if m.match_event(event)? {
+                    if m.match_event(event, rule_states)? {
                         return Ok(false);
                     }
                 }
@@ -171,7 +172,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if m.match_event(event)? {
+                    if m.match_event(event, rule_states)? {
                         return Ok(false);
                     }
                 }
@@ -179,17 +180,17 @@ impl Expr {
             }
             Expr::Variable(var) => {
                 if let Some(m) = operands.get(var) {
-                    return m.match_event(event).map_err(|e| e.into());
+                    return m.match_event(event, rule_states).map_err(|e| e.into());
                 }
                 Err(Error::UnknowOperand(var.into()))
             }
             Expr::BinOp { lhs, op, rhs } => match op {
-                Op::And => Ok(lhs.compute_for_event(operands, event)?
-                    && rhs.compute_for_event(operands, event)?),
-                Op::Or => Ok(lhs.compute_for_event(operands, event)?
-                    || rhs.compute_for_event(operands, event)?),
+                Op::And => Ok(lhs.compute_for_event(event, operands, rule_states)?
+                    && rhs.compute_for_event(event, operands, rule_states)?),
+                Op::Or => Ok(lhs.compute_for_event(event, operands, rule_states)?
+                    || rhs.compute_for_event(event, operands, rule_states)?),
             },
-            Expr::Negate(expr) => Ok(!expr.compute_for_event(operands, event)?),
+            Expr::Negate(expr) => Ok(!expr.compute_for_event(event, operands, rule_states)?),
             Expr::None => Ok(true),
         }
     }
@@ -341,10 +342,11 @@ impl From<Expr> for Condition {
 impl Condition {
     pub(crate) fn compute_for_event<E: Event>(
         &self,
-        operands: &HashMap<String, Match>,
         event: &E,
+        operands: &HashMap<String, Match>,
+        rules_states: &HashMap<String, bool>,
     ) -> Result<bool, Error> {
-        self.expr.compute_for_event(operands, event)
+        self.expr.compute_for_event(event, operands, rules_states)
     }
 }
 

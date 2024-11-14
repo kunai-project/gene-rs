@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use pest::{iterators::Pairs, Parser};
 use pest_derive::Parser;
@@ -48,8 +48,23 @@ impl MatchParser {
         Self::parse_path_segments(pairs)
     }
 
-    fn is_direct_match<S: AsRef<str>>(s: S) -> bool {
-        MatchParser::parse(Rule::direct_match, s.as_ref()).is_ok()
+    #[inline]
+    fn parse_input<S: AsRef<str>>(input: S) -> Result<Match, Error> {
+        let mut pairs = MatchParser::parse(Rule::matcher, input.as_ref()).map_err(Box::new)?;
+        match pairs.next() {
+            Some(pairs) => match pairs.into_inner().next() {
+                Some(pairs) => match pairs.as_rule() {
+                    Rule::direct_match => DirectMatch::from_str(input.as_ref()).map(Match::from),
+                    Rule::indirect_match => {
+                        IndirectMatch::from_str(input.as_ref()).map(Match::from)
+                    }
+                    Rule::rule_match => RuleMatch::parse(pairs.into_inner()).map(Match::from),
+                    _ => Err(Error::parser("unknown match format")),
+                },
+                _ => Err(Error::parser("match empty inner pairs")),
+            },
+            _ => Err(Error::parser("invalid match")),
+        }
     }
 }
 
@@ -86,6 +101,8 @@ impl MatchValue {
 
 #[derive(Error, Debug, PartialEq)]
 pub enum Error {
+    #[error("rule={0} not found")]
+    RuleNotFound(String),
     #[error("field={0} not found")]
     FieldNotFound(String),
     #[error("incompatible types field={path} expect={expect} got={got}")]
@@ -94,14 +111,28 @@ pub enum Error {
         expect: &'static str,
         got: &'static str,
     },
+    #[error("match parser {0}")]
+    Parser(String),
     #[error("{0}")]
     Path(#[from] PathError),
     #[error("{0}")]
-    Parse(#[from] Box<pest::error::Error<Rule>>),
+    Pest(#[from] Box<pest::error::Error<Rule>>),
     #[error("{0}")]
     ParseNum(#[from] NumberError),
     #[error("{0}")]
     Regex(#[from] regex::Error),
+}
+
+impl Error {
+    #[inline(always)]
+    fn parser<S: AsRef<str>>(s: S) -> Self {
+        Self::Parser(s.as_ref().into())
+    }
+
+    #[inline(always)]
+    fn rule_not_found<S: AsRef<str>>(s: S) -> Self {
+        Self::RuleNotFound(s.as_ref().into())
+    }
 }
 
 impl MatchValue {
@@ -120,24 +151,45 @@ impl MatchValue {
 pub(crate) enum Match {
     Direct(DirectMatch),
     Indirect(IndirectMatch),
+    Rule(RuleMatch),
+}
+
+impl From<IndirectMatch> for Match {
+    fn from(value: IndirectMatch) -> Self {
+        Self::Indirect(value)
+    }
+}
+
+impl From<DirectMatch> for Match {
+    fn from(value: DirectMatch) -> Self {
+        Self::Direct(value)
+    }
+}
+
+impl From<RuleMatch> for Match {
+    fn from(value: RuleMatch) -> Self {
+        Self::Rule(value)
+    }
 }
 
 impl FromStr for Match {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if MatchParser::is_direct_match(s) {
-            return Ok(Self::Direct(DirectMatch::from_str(s)?));
-        }
-
-        Ok(Self::Indirect(IndirectMatch::from_str(s)?))
+        MatchParser::parse_input(s)
     }
 }
 
 impl Match {
-    pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
+    #[inline]
+    pub(crate) fn match_event<E: Event>(
+        &self,
+        event: &E,
+        rule_state: &HashMap<String, bool>,
+    ) -> Result<bool, Error> {
         match self {
             Self::Direct(m) => m.match_event(event),
             Self::Indirect(m) => m.match_event(event),
+            Self::Rule(m) => m.match_event(rule_state),
         }
     }
 }
@@ -381,6 +433,35 @@ impl DirectMatch {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RuleMatch(String);
+
+impl RuleMatch {
+    #[inline]
+    fn parse(mut pairs: Pairs<'_, Rule>) -> Result<Self, Error> {
+        match pairs.next() {
+            Some(pairs) => match pairs.as_rule() {
+                Rule::rule_name => Ok(RuleMatch(pairs.as_str().into())),
+                _ => Err(Error::parser("invalid rule name")),
+            },
+            _ => Err(Error::parser("invalid rule match")),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn match_event(&self, states: &HashMap<String, bool>) -> Result<bool, Error> {
+        states
+            .get(&self.0)
+            .copied()
+            .ok_or(Error::rule_not_found(&self.0))
+    }
+
+    #[inline(always)]
+    pub(crate) fn rule_name(&self) -> &str {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod test {
 
@@ -493,5 +574,25 @@ mod test {
         assert_eq!(segments[2], "file");
         assert_eq!(segments[3], "with whitespace");
         assert_eq!(segments[4], "whitespace and .");
+    }
+
+    #[test]
+    fn test_parse_rule_match() {
+        fn as_rule_match(m: Match) -> RuleMatch {
+            match m {
+                Match::Rule(m) => m,
+                _ => panic!("not a rule match"),
+            }
+        }
+
+        assert_eq!(
+            as_rule_match(MatchParser::parse_input("rule(test)").unwrap()),
+            RuleMatch("test".into())
+        );
+
+        assert_eq!(
+            as_rule_match(MatchParser::parse_input("rule(blip.blop)").unwrap()),
+            RuleMatch("blip.blop".into())
+        )
     }
 }
