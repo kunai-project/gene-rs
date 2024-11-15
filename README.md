@@ -2,6 +2,8 @@
 
 [![Crates.io Version](https://img.shields.io/crates/v/gene?style=for-the-badge)](https://crates.io/crates/gene)
 [![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/0xrawsec/gene-rs/ci.yml?style=for-the-badge&logo=github)](https://github.com/kunai-project/gene-rs/actions)
+![Crates.io MSRV](https://img.shields.io/crates/msrv/gene?style=for-the-badge)
+
 [![Documentation](https://img.shields.io/badge/docs-gene-blue.svg?style=for-the-badge&logo=docsdotrs)](https://docs.rs/gene)
 [![Documentation](https://img.shields.io/badge/docs-gene_derive-purple.svg?style=for-the-badge&logo=docsdotrs)](https://docs.rs/gene_derive)
 
