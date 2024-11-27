@@ -14,3 +14,11 @@ pub use values::FieldValue;
 
 mod paths;
 pub use paths::XPath;
+
+mod template;
+pub use template::Templates;
+
+mod compiler;
+pub use compiler::Compiler;
+
+mod map;
