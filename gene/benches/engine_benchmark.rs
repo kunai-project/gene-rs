@@ -5,7 +5,7 @@ use std::{
 };
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use gene::{Engine, Event, FieldGetter, FieldValue, Rule};
+use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, Rule};
 use gene_derive::{Event, FieldGetter};
 use libflate::gzip;
 use serde::{Deserialize, Deserializer};
@@ -62,17 +62,20 @@ fn bench_rust_events(c: &mut Criterion) {
         .map(|e| e.unwrap())
         .collect::<Vec<WinEvent>>();
 
-    let mut engine = Engine::new();
+    let mut compiler = Compiler::new();
 
     let mut group = c.benchmark_group("scan-throughput");
     group.sample_size(20);
     group.throughput(Throughput::Bytes(all.len() as u64));
+
     for i in 0..1 {
         for r in it.iter() {
             let mut r = r.clone();
             r.name = format!("{}.{}", r.name, i);
-            engine.insert_rule(r).unwrap();
+            compiler.load(r).unwrap();
         }
+
+        let mut engine = Engine::try_from(compiler.clone()).unwrap();
 
         group.bench_function(&format!("scan-with-{}-rules", engine.rules_count()), |b| {
             b.iter(|| {

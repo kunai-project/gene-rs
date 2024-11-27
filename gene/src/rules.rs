@@ -1,5 +1,5 @@
 use self::{attack::AttackId, condition::Condition, matcher::Match};
-use crate::Event;
+use crate::{map::deserialize_uk_hashmap, template::Templates, Event};
 
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -15,9 +15,6 @@ use thiserror::Error;
 mod condition;
 // used to parse path
 pub(crate) mod matcher;
-
-mod map;
-pub use map::MatchHashMap;
 
 pub const MAX_SEVERITY: u8 = 10;
 
@@ -135,14 +132,18 @@ impl<'de> Deserialize<'de> for Type {
 #[serde(deny_unknown_fields)]
 pub struct Meta {
     /// free text tags associated to the rule
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<HashSet<String>>,
     /// [MITRE ATT&CK](https://attack.mitre.org/) ids concerned by this rule
     /// This is not a free-text field, when the rule compiles a format checking
     /// made on the ids.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub attack: Option<HashSet<String>>,
     /// authors of the rule
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub authors: Option<Vec<String>>,
     /// any comment
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub comments: Option<Vec<String>>,
 }
 
@@ -151,6 +152,7 @@ pub struct Meta {
 #[serde(deny_unknown_fields)]
 pub struct Params {
     /// whether to disable the rule or not
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable: Option<bool>,
 }
 
@@ -164,6 +166,7 @@ pub struct MatchOn {
     /// **one** of the source and **one** of its associated event id.
     /// To match all events from a source just leave an empty set of
     /// event ids.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<HashMap<String, HashSet<i64>>>,
 }
 
@@ -174,21 +177,31 @@ pub struct Rule {
     /// name fo the rule
     pub name: String,
     #[serde(rename = "type")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ty: Option<Type>,
     /// rule's metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Meta>,
     /// miscellaneous parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Params>,
     /// match-on directives
     #[serde(rename = "match-on")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub match_on: Option<MatchOn>,
     /// matches
-    pub matches: Option<MatchHashMap<String, String>>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_uk_hashmap")]
+    pub matches: Option<HashMap<String, String>>,
     /// rule triggering condition
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
     /// severity given to the events matching the rule
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub severity: Option<u8>,
     /// actions to take when rule triggers
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub actions: Option<HashSet<String>>,
 }
 
@@ -209,18 +222,8 @@ impl Rule {
     }
 
     #[inline]
-    pub fn apply_templates(mut self, templates: &HashMap<String, String>) -> Self {
-        if let Some(matches) = self.matches.as_mut() {
-            for op in matches.keys().cloned().collect::<Vec<_>>() {
-                matches.entry(op.clone()).and_modify(|s| {
-                    let mut new = s.clone();
-                    templates
-                        .iter()
-                        .for_each(|(name, tpl)| new = new.replace(&format!("{{{{{name}}}}}"), tpl));
-                    *s = new;
-                });
-            }
-        }
+    pub fn apply_templates(mut self, templates: &Templates) -> Self {
+        templates.replace(&mut self);
         self
     }
 
@@ -723,7 +726,7 @@ condition: $a and $b
 
         let d = serde_yaml::from_str::<'_, Rule>(test)
             .unwrap()
-            .apply_templates(&templates);
+            .apply_templates(&templates.into());
 
         let matches = d.matches.unwrap();
         let m = matches.get("$a").unwrap();

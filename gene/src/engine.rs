@@ -1,20 +1,18 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    io,
-};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
+    compiler,
     rules::{self, bound_severity, CompiledRule},
-    Event, FieldValue, Rule,
+    Compiler, Event, FieldValue,
 };
 
 use crate::FieldGetter;
 use gene_derive::FieldGetter;
 
-/// structure representing the result of an [Event] scanned by the
+/// Structure representing the result of an [Event] scanned by the
 /// [Engine]. It aggregates information about the rules matching a
 /// given event as well as some meta data about it (tags, attack ids ...).
 /// A severity score (sum of all matching rules severity bounded to [MAX_SEVERITY](rules::MAX_SEVERITY)) is also part of a `ScanResult`.
@@ -127,12 +125,6 @@ impl ScanResult {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("duplicate rule={0}")]
-    DuplicateRule(String),
-    #[error("unknown rule dependency in rule={0}")]
-    UnknownRuleDependency(String),
-    #[error("{0}")]
-    Deserialize(#[from] serde_yaml::Error),
     #[error("{0}")]
     Rule(#[from] rules::Error),
 }
@@ -145,7 +137,7 @@ pub enum Error {
 ///
 /// ```
 /// use gene_derive::{Event, FieldGetter};
-/// use gene::{Engine, Event,FieldGetter,FieldValue};
+/// use gene::{Compiler, Engine, Event,FieldGetter,FieldValue};
 /// use std::borrow::Cow;
 ///
 /// #[derive(FieldGetter)]
@@ -177,8 +169,8 @@ pub enum Error {
 ///     some_gen: 3.14,
 /// };
 ///
-/// let mut e = Engine::new();
-/// e.load_rules_yaml_str(r#"
+/// let mut c = Compiler::new();
+/// c.load_rules_from_str(r#"
 /// ---
 /// name: toast.it
 /// match-on:
@@ -197,7 +189,7 @@ pub enum Error {
 ///     $b: .data.b <= '42'
 /// condition: $n and $pi and $a and $b
 /// ..."#).unwrap();
-///
+/// let mut e = Engine::try_from(c).unwrap();
 /// let scan_res = e.scan(&event).unwrap().unwrap();
 /// println!("{:#?}", scan_res);
 ///
@@ -221,6 +213,19 @@ pub struct Engine {
     deps_cache: HashMap<usize, Vec<usize>>,
 }
 
+impl TryFrom<Compiler> for Engine {
+    type Error = compiler::Error;
+    fn try_from(mut c: Compiler) -> Result<Self, Self::Error> {
+        let mut e = Self::default();
+        // we must be sure rules have been compiled
+        c.compile()?;
+        for r in c.compiled {
+            e.insert_compiled(r);
+        }
+        Ok(e)
+    }
+}
+
 impl Engine {
     /// creates a new event scanning engine
     pub fn new() -> Self {
@@ -229,33 +234,14 @@ impl Engine {
         }
     }
 
-    /// insert a rule into the engine
-    #[inline]
-    pub fn insert_rule(&mut self, r: Rule) -> Result<(), Error> {
-        if r.is_disabled() {
-            return Ok(());
-        }
-
-        if self.names.contains_key(&r.name) {
-            return Err(Error::DuplicateRule(r.name));
-        }
-        // we need to be sure nothing can fail beyound this point
-        let compiled: CompiledRule = r.try_into()?;
-        let has_deps = !compiled.depends.is_empty();
-
-        // We verify that all rules we depend on are known.
-        // The fact that rule dependencies must be known makes
-        // circular references impossible
-        for dep in compiled.depends.iter() {
-            self.names
-                .get(dep)
-                .ok_or(Error::UnknownRuleDependency(dep.clone()))?;
-        }
+    #[inline(always)]
+    pub(crate) fn insert_compiled(&mut self, r: CompiledRule) {
+        let has_deps = !r.depends.is_empty();
 
         // this is the index the rule is going to be inserted at
         let rule_idx = self.rules.len();
-        self.names.insert(compiled.name.clone(), rule_idx);
-        self.rules.push(compiled);
+        self.names.insert(r.name.clone(), rule_idx);
+        self.rules.push(r);
 
         // since we know all the dependent rules are there, we can cache
         // the list of dependencies and we never need to compute it again
@@ -266,24 +252,6 @@ impl Engine {
 
         // cache becomes outdated
         self.rules_cache.clear();
-
-        Ok(())
-    }
-
-    /// load rule(s) defined in a string YAML documents, into the engine
-    pub fn load_rules_yaml_str<S: AsRef<str>>(&mut self, s: S) -> Result<(), Error> {
-        for document in serde_yaml::Deserializer::from_str(s.as_ref()) {
-            self.insert_rule(Rule::deserialize(document)?)?;
-        }
-        Ok(())
-    }
-
-    /// loads rules from a [io::Read] containing YAML serialized data
-    pub fn load_rules_yaml_reader<R: io::Read>(&mut self, r: R) -> Result<(), Error> {
-        for document in serde_yaml::Deserializer::from_reader(r) {
-            self.insert_rule(Rule::deserialize(document)?)?;
-        }
-        Ok(())
     }
 
     #[inline(always)]
@@ -434,13 +402,6 @@ impl Engine {
 mod test {
     use super::*;
 
-    macro_rules! rule {
-        ($rule: literal) => {{
-            let d: Rule = serde_yaml::from_str($rule).unwrap();
-            d
-        }};
-    }
-
     macro_rules! fake_event {
         ($name:tt, id=$id:literal, source=$source:literal, $(($path:literal, $value:expr)),*) => {
             struct $name {}
@@ -474,19 +435,20 @@ mod test {
 
     #[test]
     fn test_basic_match_scan() {
-        let mut e = Engine::new();
-        let r = rule!(
+        let mut c = Compiler::new();
+
+        c.load_rules_from_str(
             r#"
----
 name: test
 matches:
     $a: .ip ~= "^8\.8\."
 condition: $a
 actions: ["do_something"]
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(r).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         assert!(sr.rules.contains("test"));
@@ -498,20 +460,19 @@ actions: ["do_something"]
 
     #[test]
     fn test_basic_filter_scan() {
-        let mut e = Engine::new();
-        let r = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
----
 name: test
 type: filter
 matches:
     $a: .ip ~= "^8\.8\."
 condition: $a
-actions: ["do_something"]
-..."#
-        );
+actions: ["do_something"]"#,
+        )
+        .unwrap();
 
-        e.insert_rule(r).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         // filter matches should not be put in matches
@@ -527,19 +488,19 @@ actions: ["do_something"]
     fn test_include_all_empty_filter() {
         // test that we must take all events when nothing is
         // included / excluded
-        let mut e = Engine::new();
-        let r = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
----
 name: test
 type: filter
 match-on:
     events:
         test: []
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(r).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
         e.scan(&IpEvt {}).unwrap().unwrap();
 
@@ -550,19 +511,20 @@ match-on:
     #[test]
     fn test_include_filter() {
         // test that only events included must be included
-        let mut e = Engine::new();
-        let r = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
----
 name: test
 type: filter
 match-on:
     events:
         test: [ 2 ]
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(r).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
         // not explicitly included so it should not be
         assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
@@ -574,19 +536,19 @@ match-on:
     #[test]
     fn test_exclude_filter() {
         // test that only stuff excluded must be excluded
-        let mut e = Engine::new();
-        let r = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
----
 name: test
 type: filter
 match-on:
     events:
         test: [ -1 ]
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(r).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
         assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
 
@@ -602,19 +564,20 @@ match-on:
     fn test_mix_include_exclude_filter() {
         // test that when include and exclude filters are
         // specified we take only events in those
-        let mut e = Engine::new();
-        let r = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
----
 name: test
 type: filter
 match-on:
     events:
         test: [ -1, 2 ]
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(r).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
         assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
 
@@ -629,8 +592,8 @@ match-on:
 
     #[test]
     fn test_match_and_filter() {
-        let mut e = Engine::new();
-        let _match = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
 ---
 name: match
@@ -638,22 +601,20 @@ matches:
     $a: .ip ~= "^8\.8\."
 condition: $a
 actions: ["do_something"]
-..."#
-        );
 
-        let filter = rule!(
-            r#"
 ---
+
 name: filter
 type: filter
 match-on:
     events:
         test: [1]
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(_match).unwrap();
-        e.insert_rule(filter).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         assert!(sr.rules.contains("match"));
@@ -664,8 +625,8 @@ match-on:
 
     #[test]
     fn test_match_with_tags() {
-        let mut e = Engine::new();
-        let t4343 = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
 ---
 name: test.1
@@ -674,23 +635,22 @@ meta:
 match-on:
     events:
         test: []
-..."#
-        );
 
-        let t4242 = rule!(
-            r#"
 ---
+
 name: test.2
 meta:
     tags: ['another:tag', 'some:random:tag']
 match-on:
     events:
         test: []
-..."#
-        );
 
-        e.insert_rule(t4242).unwrap();
-        e.insert_rule(t4343).unwrap();
+"#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         assert!(sr.rules.contains("test.1"));
@@ -701,8 +661,8 @@ match-on:
 
     #[test]
     fn test_match_with_attack() {
-        let mut e = Engine::new();
-        let t4343 = rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
 ---
 name: detect.t4343
@@ -712,12 +672,9 @@ meta:
 match-on:
     events:
         test: []
-..."#
-        );
 
-        let t4242 = rule!(
-            r#"
 ---
+
 name: detect.t4242
 meta:
     attack:
@@ -725,11 +682,12 @@ meta:
 match-on:
     events:
         test: []
-..."#
-        );
+"#,
+        )
+        .unwrap();
 
-        e.insert_rule(t4242).map_err(|e| println!("{e}")).unwrap();
-        e.insert_rule(t4343).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         assert!(sr.rules.contains("detect.t4242"));
@@ -740,35 +698,31 @@ match-on:
 
     #[test]
     fn test_rule_dependency() {
-        let mut e = Engine::new();
-
-        e.insert_rule(rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
 name: dep.rule
 type: dependency
 matches:
     $ip: .ip == '8.8.4.4'
 condition: any of them
-"#
-        ))
-        .unwrap();
 
-        e.insert_rule(rule!(
-            r#"
+---
+
 name: main
 matches:
     $dep1: rule(dep.rule)
 condition: all of them
-"#
-        ))
+
+---
+
+name: match.all
+
+"#,
+        )
         .unwrap();
 
-        e.insert_rule(rule!(
-            r#"
-name: match.all
-"#
-        ))
-        .unwrap();
+        let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
@@ -784,66 +738,25 @@ name: match.all
     }
 
     #[test]
-    fn test_load_rule_unk_dep() {
-        let mut e = Engine::new();
-
-        let res = e.insert_rule(rule!(
-            r#"
-name: test
-matches:
-    $dep: rule(unknown.rule)
-condition: any of them
-"#
-        ));
-
-        assert!(matches!(res, Err(Error::UnknownRuleDependency(_))));
-    }
-
-    #[test]
-    fn test_load_circular_rule() {
-        let mut e = Engine::new();
-
-        let res = e.insert_rule(rule!(
-            r#"
-name: test
-matches:
-    $dep: rule(test)
-condition: any of them
-"#
-        ));
-
-        // when dependencies are checked, rule is not yet inserted in the engine
-        // so it should result in an UnknownRuleDependency
-        assert!(matches!(res, Err(Error::UnknownRuleDependency(_))));
-    }
-
-    #[test]
     fn test_dep_cache() {
-        let mut e = Engine::new();
-
-        e.insert_rule(rule!(
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
             r#"
 name: dep.rule
 type: dependency
 matches:
     $ip: .ip == '8.8.4.4'
 condition: any of them
-"#
-        ))
-        .unwrap();
 
-        e.insert_rule(rule!(
-            r#"
+---
+
 name: main
 matches:
     $dep1: rule(dep.rule)
 condition: all of them
-"#
-        ))
-        .unwrap();
 
-        e.insert_rule(rule!(
-            r#"
+---
+
 name: multi.deps
 matches:
     $dep1: rule(dep.rule)
@@ -851,9 +764,11 @@ matches:
     $dep3: rule(dep.rule)
     $dep4: rule(dep.rule)
 condition: all of them
-"#
-        ))
+"#,
+        )
         .unwrap();
+
+        let e = Engine::try_from(c).unwrap();
 
         // we check the dep cache is correct
         assert_eq!(
