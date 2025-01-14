@@ -341,7 +341,6 @@ impl FieldGetterDerive {
 ///
 /// `#[getter(skip)]` skip the field from being implemented. It is important to know
 /// that any access to a skipped field will return [None]
-
 #[proc_macro_derive(FieldGetter, attributes(getter))]
 pub fn field_getter_derive(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
