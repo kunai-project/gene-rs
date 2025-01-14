@@ -58,7 +58,7 @@ mod attack {
 }
 
 /// Represents the type of [Rule]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Type {
     /// Use it to encode detection information.
     /// Rule will be used to update [crate::ScanResult]
@@ -447,6 +447,12 @@ impl CompiledRule {
     #[inline(always)]
     pub(crate) fn is_detection(&self) -> bool {
         matches!(self.ty, Type::Detection)
+    }
+
+    /// Returns rule's [Type]
+    #[inline(always)]
+    pub fn ty(&self) -> Type {
+        self.ty
     }
 }
 
