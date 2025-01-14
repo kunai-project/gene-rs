@@ -77,7 +77,7 @@ fn bench_rust_events(c: &mut Criterion) {
 
         let mut engine = Engine::try_from(compiler.clone()).unwrap();
 
-        group.bench_function(&format!("scan-with-{}-rules", engine.rules_count()), |b| {
+        group.bench_function(format!("scan-with-{}-rules", engine.rules_count()), |b| {
             b.iter(|| {
                 for e in events.iter() {
                     let _ = engine.scan(e);

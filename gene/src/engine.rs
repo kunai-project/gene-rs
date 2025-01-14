@@ -280,6 +280,11 @@ impl Engine {
             .to_vec()
     }
 
+    /// Returns the `Vec` of [CompiledRule] currently loaded in the engine
+    pub fn compiled_rules(&self) -> &Vec<CompiledRule> {
+        &self.rules
+    }
+
     /// returns the number of rules loaded in the engine
     #[inline(always)]
     pub fn rules_count(&self) -> usize {
@@ -777,6 +782,42 @@ condition: all of them
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn test_compiled_rules() {
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+name: dep.rule
+type: dependency
+
+---
+
+name: main
+type: filter
+
+---
+
+name: multi.deps
+type: detection
+"#,
+        )
+        .unwrap();
+
+        let e = Engine::try_from(c).unwrap();
+
+        assert_eq!(
+            e.compiled_rules().iter().filter(|c| c.is_filter()).count(),
+            1
+        );
+        assert_eq!(
+            e.compiled_rules()
+                .iter()
+                .filter(|c| c.is_detection())
+                .count(),
+            1
         );
     }
 }
