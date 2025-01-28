@@ -439,13 +439,25 @@ impl CompiledRule {
         false
     }
 
+    /// Gives a read only access to the rule's name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Gives a read only access to the rule's severity
+    pub fn severity(&self) -> u8 {
+        self.severity
+    }
+
+    /// Returns true if the rule is [Type::Filter]
     #[inline(always)]
-    pub(crate) fn is_filter(&self) -> bool {
+    pub fn is_filter(&self) -> bool {
         matches!(self.ty, Type::Filter)
     }
 
+    /// Returns true if the rule is [Type::Detection]
     #[inline(always)]
-    pub(crate) fn is_detection(&self) -> bool {
+    pub fn is_detection(&self) -> bool {
         matches!(self.ty, Type::Detection)
     }
 
