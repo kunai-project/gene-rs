@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap, HashSet},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,114 +15,194 @@ use crate::{
 use crate::FieldGetter;
 use gene_derive::FieldGetter;
 
-/// Structure representing the result of an [Event] scanned by the
-/// [Engine]. It aggregates information about the rules matching a
-/// given event as well as some meta data about it (tags, attack ids ...).
-/// A severity score (sum of all matching rules severity bounded to [MAX_SEVERITY](rules::MAX_SEVERITY)) is also part of a `ScanResult`.
-/// Some [Rules](Rule) matching an [Event] might be filter rules. In this
-/// case only the [filtered](ScanResult::filtered) flag is updated.
+/// Structure holding information about the detection rules matching the [`Event`].
 #[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
-pub struct ScanResult {
-    /// union of the rule names matching the event
+pub struct Detection<'s> {
+    /// Union of the rule names matching the event
     #[getter(skip)]
-    pub rules: HashSet<String>,
-    /// union of tags defined in the rules matching the event
-    #[getter(skip)]
-    #[serde(skip_serializing_if = "HashSet::is_empty")]
-    pub tags: HashSet<String>,
-    /// union of attack ids defined in the rules matching the event
+    pub rules: HashSet<Cow<'s, str>>,
+    /// Union of tags defined in the rules matching the event
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
-    pub attack: HashSet<String>,
-    /// union of actions defined in the rules matching the event
+    pub tags: HashSet<Cow<'s, str>>,
+    /// Union of attack ids defined in the rules matching the event
     #[getter(skip)]
     #[serde(skip_serializing_if = "HashSet::is_empty")]
-    pub actions: HashSet<String>,
-    /// flag indicating whether a filter rule matched
-    #[serde(skip)]
-    pub filtered: bool,
-    /// total severity score (bounded to [MAX_SEVERITY](rules::MAX_SEVERITY))
+    pub attack: HashSet<Cow<'s, str>>,
+    /// Union of actions defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub actions: HashSet<Cow<'s, str>>,
+    /// Sum of all matching rules' severity (bounded to [MAX_SEVERITY](rules::MAX_SEVERITY))
     pub severity: u8,
 }
 
-impl ScanResult {
+/// Structure holding information about filters matching the [`Event`]
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Filter<'s> {
+    /// Union of the rule names matching the event
+    #[getter(skip)]
+    pub rules: HashSet<Cow<'s, str>>,
+    /// Union of tags defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub tags: HashSet<Cow<'s, str>>,
+    /// Union of actions defined in the rules matching the event
+    #[getter(skip)]
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
+    pub actions: HashSet<Cow<'s, str>>,
+}
+
+/// Structure representing the result of an [`Event`] scanned by the
+/// [`Engine`].
+#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ScanResult<'s> {
+    /// If any contains [`Detection`] information resulting from the scan
+    #[getter(skip)]
+    pub detection: Option<Detection<'s>>,
+    /// If any contains [`Filter`] information resulting from the scan
+    #[getter(skip)]
+    pub filter: Option<Filter<'s>>,
+}
+
+impl<'s> ScanResult<'s> {
+    /// Creates an new [`ScanResult`]
     pub fn new() -> Self {
         ScanResult {
             ..Default::default()
         }
     }
 
-    #[inline]
-    fn update(&mut self, r: &CompiledRule) {
+    #[inline(always)]
+    fn update(&mut self, r: &'s CompiledRule) {
         // we update matches only if it is not a filter rule
-        if !r.is_filter() {
+        if r.is_detection() {
             // update matches
-            self.rules.insert(r.name.clone());
+            let detections = self.detection.get_or_insert_default();
 
-            // updating tags info
-            if !r.tags.is_empty() {
-                self.tags = r.tags.union(&self.tags).cloned().collect();
-            }
+            detections.rules.insert(Cow::from(&r.name));
 
             // updating attack info
             if !r.attack.is_empty() {
-                self.attack = r.attack.union(&self.attack).cloned().collect();
+                r.attack.iter().for_each(|a| {
+                    detections.attack.insert(a.into());
+                });
+            }
+
+            // updating tags info
+            if !r.tags.is_empty() {
+                r.tags.iter().for_each(|t| {
+                    detections.tags.insert(t.into());
+                });
+            }
+
+            // we update actions
+            if !r.actions.is_empty() {
+                r.actions.iter().for_each(|a| {
+                    detections.actions.insert(a.into());
+                });
             }
 
             // we bound the severity of an event
-            self.severity = bound_severity(self.severity + r.severity);
-        }
+            detections.severity = bound_severity(detections.severity + r.severity);
+        } else if r.is_filter() {
+            let filters = self.filter.get_or_insert_default();
 
-        // we update actions
-        if !r.actions.is_empty() {
-            self.actions = r.actions.union(&self.actions).cloned().collect();
-        }
+            filters.rules.insert(Cow::from(&r.name));
 
-        self.filtered |= r.is_filter();
+            // updating tags info
+            if !r.tags.is_empty() {
+                r.tags.iter().for_each(|t| {
+                    filters.tags.insert(t.into());
+                });
+            }
+
+            // we update actions
+            if !r.actions.is_empty() {
+                r.actions.iter().for_each(|a| {
+                    filters.actions.insert(a.into());
+                });
+            }
+        }
     }
 
-    /// returns true if the scan results contains a given tag
+    /// Returns true if the scan result has matched filter rule with `name`
+    #[inline(always)]
+    pub fn contains_filter<S: AsRef<str>>(&self, name: S) -> bool {
+        self.filter
+            .as_ref()
+            .map(|f| f.rules.contains(name.as_ref()))
+            .unwrap_or_default()
+    }
+
+    /// Returns true if the scan results matched detection rule with `name`
+    #[inline(always)]
+    pub fn contains_detection<S: AsRef<str>>(&self, name: S) -> bool {
+        self.detection
+            .as_ref()
+            .map(|d| d.rules.contains(name.as_ref()))
+            .unwrap_or_default()
+    }
+
+    /// Returns true if the scan results contains a given tag
     #[inline(always)]
     pub fn contains_tag<S: AsRef<str>>(&self, tag: S) -> bool {
-        self.tags.contains(tag.as_ref())
+        self.detection
+            .as_ref()
+            .map(|d| d.tags.contains(tag.as_ref()))
+            .or_else(|| self.filter.as_ref().map(|f| f.tags.contains(tag.as_ref())))
+            .unwrap_or_default()
     }
 
-    /// returns true if the scan results contains a given action
+    /// Returns true if the scan results contains a given action
     #[inline(always)]
     pub fn contains_action<S: AsRef<str>>(&self, action: S) -> bool {
-        self.actions.contains(action.as_ref())
+        self.detection
+            .as_ref()
+            .map(|d| d.actions.contains(action.as_ref()))
+            .or_else(|| {
+                self.filter
+                    .as_ref()
+                    .map(|f| f.actions.contains(action.as_ref()))
+            })
+            .unwrap_or_default()
     }
 
-    /// returns true if the scan results contains a given attack id. No validity
+    /// Returns true if the scan results contains a given attack id. No validity
     /// check is made on the id parameter, so if it is not looking like a MITRE
     /// ATT&CK id, this function will return false.
     #[inline(always)]
     pub fn contains_attack_id<S: AsRef<str>>(&self, id: S) -> bool {
-        self.attack.contains(&id.as_ref().to_ascii_uppercase())
+        let attack_id = id.as_ref().to_ascii_uppercase();
+        
+        self.detection
+            .as_ref()
+            .map(|d| d.attack.contains(&Cow::from(&attack_id)))
+            .unwrap_or_default()
     }
 
-    /// returns true if the scan results is considered as a detection (i.e. it matched some detection rules)
+    /// Returns true if the scan results is considered as a detection (i.e. it matched some detection rules)
     #[inline(always)]
-    pub fn is_detection(&self) -> bool {
-        !self.rules.is_empty()
+    pub fn has_detection(&self) -> bool {
+        self.detection.is_some()
     }
 
-    /// returns true if the `ScanResult` is empty
+    /// Returns true if the `ScanResult` is empty
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty() && !self.is_filtered()
+        self.detection.is_none() && self.filter.is_none()
     }
 
-    /// returns true if the `ScanResult` **only matched** filter rule(s)
+    /// Returns true if the `ScanResult` **only matched** filter rule(s)
     #[inline(always)]
-    pub fn is_only_filter(&self) -> bool {
-        self.rules.is_empty() && self.is_filtered()
+    pub fn has_only_filter(&self) -> bool {
+        self.detection.is_none() && self.filter.is_some()
     }
 
-    /// returns true if the `ScanResult` **also matched** a filter rule
+    /// Returns true if the `ScanResult` **also matched** a filter rule
     #[inline(always)]
-    pub fn is_filtered(&self) -> bool {
-        self.filtered
+    pub fn has_filter(&self) -> bool {
+        self.filter.is_some()
     }
 }
 
@@ -129,8 +212,8 @@ pub enum Error {
     Rule(#[from] rules::Error),
 }
 
-/// Structure to represent an [Event] scanning engine.
-/// Its role being to scan any structure implementing [Event] trait
+/// Structure to represent an [`Event`] scanning engine.
+/// Its role being to scan any structure implementing [`Event`] trait
 /// with all the [Rules](Rule) loaded into the engine
 ///
 /// # Example
@@ -193,7 +276,7 @@ pub enum Error {
 /// let scan_res = e.scan(&event).unwrap().unwrap();
 /// println!("{:#?}", scan_res);
 ///
-/// assert!(scan_res.rules.contains("toast.it"));
+/// assert!(scan_res.contains_detection("toast.it"));
 /// assert!(scan_res.contains_tag("my:super:tag"));
 /// assert!(scan_res.contains_attack_id("T1234"));
 /// ```
@@ -255,9 +338,10 @@ impl Engine {
     }
 
     #[inline(always)]
-    fn cached_rules(&mut self, src: String, id: i64) -> Vec<usize> {
+    fn cached_rules(&mut self, src: String, id: i64) -> &[usize] {
         let key = (src, id);
         let mut tmp = BTreeMap::new();
+
         if !self.rules_cache.contains_key(&key) {
             for (i, r) in self
                 .rules
@@ -270,18 +354,17 @@ impl Engine {
                 // we take only rules that can match on that kind of event
                 .filter(|(_, r)| r.can_match_on(&key.0, id))
             {
-                tmp.insert((r.severity, r.name.clone()), i);
+                tmp.insert((r.severity, Cow::from(&r.name)), i);
             }
         }
 
         self.rules_cache
             .entry(key)
-            .or_insert(tmp.values().rev().cloned().collect())
-            .to_vec()
+            .or_insert_with(|| tmp.values().rev().cloned().collect())
     }
 
     /// Returns the `Vec` of [CompiledRule] currently loaded in the engine
-    pub fn compiled_rules(&self) -> &Vec<CompiledRule> {
+    pub fn compiled_rules(&self) -> &[CompiledRule] {
         &self.rules
     }
 
@@ -326,7 +409,7 @@ impl Engine {
         dfs
     }
 
-    /// scan an [Event] with all the rules loaded in the [Engine]
+    /// Scan an [`Event`] with all the rules loaded in the [`Engine`]
     pub fn scan<E: Event>(
         &mut self,
         event: &E,
@@ -337,7 +420,7 @@ impl Engine {
         let src = event.source();
         let id = event.id();
 
-        let i_rules = self.cached_rules(src.into(), id);
+        let i_rules = self.cached_rules(src.into(), id).to_vec();
         let mut states = HashMap::with_capacity(i_rules.len());
 
         for i in i_rules {
@@ -353,7 +436,7 @@ impl Engine {
                         if let Some(r) = self.rules.get(r_i) {
                             // we don't need to compute rule again
                             // NB: rule might be used in several places and already computed
-                            if states.contains_key(&r.name) {
+                            if states.contains_key(&Cow::from(&r.name)) {
                                 continue;
                             }
 
@@ -362,7 +445,7 @@ impl Engine {
                                 .map_err(Error::from)
                             {
                                 Ok(ok) => {
-                                    states.insert(r.name.clone(), ok);
+                                    states.insert(Cow::from(&r.name), ok);
                                 }
                                 Err(e) => last_err = Some(e),
                             }
@@ -373,7 +456,7 @@ impl Engine {
 
             // if the rule has already been matched in the process
             // of dependency matching of whatever rule
-            let ok = match states.get(&r.name) {
+            let ok = match states.get(&Cow::from(&r.name)) {
                 Some(&ok) => ok,
                 None => {
                     match r
@@ -456,11 +539,11 @@ actions: ["do_something"]
         let mut e = Engine::try_from(c).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.rules.contains("test"));
+        assert!(sr.contains_detection("test"));
         assert!(sr.contains_action("do_something"));
-        assert!(!sr.is_filtered());
+        assert!(!sr.has_filter());
         assert!(!sr.is_empty());
-        assert!(!sr.is_only_filter());
+        assert!(!sr.has_only_filter());
     }
 
     #[test]
@@ -481,12 +564,12 @@ actions: ["do_something"]"#,
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
         // filter matches should not be put in matches
-        assert!(!sr.rules.contains("test"));
+        assert!(!sr.contains_detection("test"));
         // actions should be propagated even if it is a filter
         assert!(sr.contains_action("do_something"));
         assert!(!sr.is_empty());
-        assert!(sr.is_filtered());
-        assert!(sr.is_only_filter());
+        assert!(sr.has_filter());
+        assert!(sr.has_only_filter());
     }
 
     #[test]
@@ -622,10 +705,10 @@ match-on:
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.rules.contains("match"));
+        assert!(sr.contains_detection("match"));
         assert!(sr.contains_action("do_something"));
-        assert!(sr.is_filtered());
-        assert!(!sr.is_only_filter());
+        assert!(sr.has_filter());
+        assert!(!sr.has_only_filter());
     }
 
     #[test]
@@ -658,10 +741,10 @@ match-on:
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.rules.contains("test.1"));
-        assert!(sr.rules.contains("test.2"));
-        assert!(sr.tags.contains("some:random:tag"));
-        assert!(sr.tags.contains("another:tag"));
+        assert!(sr.contains_detection("test.1"));
+        assert!(sr.contains_detection("test.2"));
+        assert!(sr.contains_tag("some:random:tag"));
+        assert!(sr.contains_tag("another:tag"));
     }
 
     #[test]
@@ -695,8 +778,8 @@ match-on:
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.rules.contains("detect.t4242"));
-        assert!(sr.rules.contains("detect.t4343"));
+        assert!(sr.contains_detection("detect.t4242"));
+        assert!(sr.contains_detection("detect.t4343"));
         assert!(sr.contains_attack_id("t4242"));
         assert!(sr.contains_attack_id("t4343"));
     }
@@ -731,15 +814,15 @@ name: match.all
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.rules.contains("main"));
-        assert!(!sr.rules.contains("dep.rule"));
-        assert!(sr.rules.contains("match.all"));
+        assert!(sr.contains_detection("main"));
+        assert!(!sr.contains_detection("dep.rule"));
+        assert!(sr.contains_detection("match.all"));
 
         fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
         let sr = e.scan(&Dummy2 {}).unwrap().unwrap();
-        assert!(!sr.rules.contains("depends"));
-        assert!(!sr.rules.contains("dep.rule"));
-        assert!(sr.rules.contains("match.all"));
+        assert!(!sr.contains_detection("depends"));
+        assert!(!sr.contains_detection("dep.rule"));
+        assert!(sr.contains_detection("match.all"));
     }
 
     #[test]

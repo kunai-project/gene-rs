@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{borrow::Cow, collections::HashMap, str::FromStr};
 
 use pest::{iterators::Pairs, Parser};
 use pest_derive::Parser;
@@ -184,7 +184,7 @@ impl Match {
     pub(crate) fn match_event<E: Event>(
         &self,
         event: &E,
-        rule_state: &HashMap<String, bool>,
+        rule_state: &HashMap<Cow<'_, str>, bool>,
     ) -> Result<bool, Error> {
         match self {
             Self::Direct(m) => m.match_event(event),
@@ -449,9 +449,9 @@ impl RuleMatch {
     }
 
     #[inline]
-    pub(crate) fn match_event(&self, states: &HashMap<String, bool>) -> Result<bool, Error> {
+    pub(crate) fn match_event(&self, states: &HashMap<Cow<'_, str>, bool>) -> Result<bool, Error> {
         states
-            .get(&self.0)
+            .get(&Cow::from(&self.0))
             .copied()
             .ok_or(Error::rule_not_found(&self.0))
     }

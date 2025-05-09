@@ -5,6 +5,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{de, Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     io,
     str::FromStr,
@@ -57,7 +58,7 @@ mod attack {
     }
 }
 
-/// Represents the type of [Rule]
+/// Represents the type of [`Rule`]
 #[derive(Debug, Clone, Copy)]
 pub enum Type {
     /// Use it to encode detection information.
@@ -170,7 +171,7 @@ pub struct MatchOn {
     pub events: Option<HashMap<String, HashSet<i64>>>,
 }
 
-/// Structure defining rule loadable in the [Engine](crate::Engine)
+/// Structure defining rule loadable in the [`Engine`](crate::Engine)
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
@@ -399,7 +400,7 @@ impl CompiledRule {
     pub(crate) fn match_event_with_states<E: Event>(
         &self,
         event: &E,
-        rules_states: &HashMap<String, bool>,
+        rules_states: &HashMap<Cow<'_, str>, bool>,
     ) -> Result<bool, Error> {
         self.condition
             .compute_for_event(event, &self.matches, rules_states)

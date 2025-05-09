@@ -1,7 +1,7 @@
 use super::matcher::{self, Match};
 use crate::Event;
 use pest::{iterators::Pairs, pratt_parser::PrattParser, Parser};
-use std::{collections::HashMap, hash::Hash, str::FromStr};
+use std::{borrow::Cow, collections::HashMap, hash::Hash, str::FromStr};
 use thiserror::Error;
 
 #[derive(pest_derive::Parser)]
@@ -87,7 +87,7 @@ impl Expr {
         &self,
         event: &E,
         operands: &HashMap<String, Match>,
-        rule_states: &HashMap<String, bool>,
+        rule_states: &HashMap<Cow<'_, str>, bool>,
     ) -> Result<bool, Error> {
         match self {
             Expr::AllOfThem => {
@@ -344,7 +344,7 @@ impl Condition {
         &self,
         event: &E,
         operands: &HashMap<String, Match>,
-        rules_states: &HashMap<String, bool>,
+        rules_states: &HashMap<Cow<'_, str>, bool>,
     ) -> Result<bool, Error> {
         self.expr.compute_for_event(event, operands, rules_states)
     }
