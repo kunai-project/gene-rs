@@ -166,9 +166,9 @@ impl EventDerive {
     }
 }
 
-/// Derives [Event](/gene/trait.Event.html) trait. It is required to also implement [FieldGetter](/gene/trait.FieldGetter.html).
+/// Derives [`Event`](/gene/trait.Event.html) trait. It is required to also implement [`FieldGetter`](/gene/trait.FieldGetter.html).
 ///
-/// **NB:** `FieldGetter` can be derived with [FieldGetter] derive macro
+/// **NB:** `FieldGetter` can be derived with [`FieldGetter`] derive macro
 ///
 /// # Structure Attributes
 ///
@@ -328,7 +328,7 @@ impl FieldGetterDerive {
     }
 }
 
-/// Derives [FieldGetter](/gene/trait.FieldGetter.html) trait
+/// Derives [`FieldGetter`](/gene/trait.FieldGetter.html) trait
 ///
 /// # Structure Attributes
 ///

@@ -58,7 +58,7 @@ impl Compiler {
         self.load_templates_from_reader(c)
     }
 
-    /// Loads a set of string [Templates] into the compiler so that it
+    /// Loads a set of string [`Templates`] into the compiler so that it
     /// can replace the appropriate strings into the rules before compiling them
     pub fn load_templates(&mut self, t: Templates) -> Result<(), Error> {
         self.templates.extend(&t)?;
@@ -103,7 +103,7 @@ impl Compiler {
         Ok(())
     }
 
-    /// Compile all the [Rule] loaded via [Compiler::load] which
+    /// Compile all the [`Rule`] loaded via [Compiler::load] which
     /// have not been compiled yet.
     #[inline]
     pub fn compile(&mut self) -> Result<(), Error> {

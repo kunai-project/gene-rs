@@ -14,7 +14,7 @@ pub trait Event: FieldGetter {
 }
 
 /// Trait representing a structure we can fetch field values
-/// from a [XPath]
+/// from a [`XPath`]
 pub trait FieldGetter {
     #[inline]
     fn get_from_path(&self, path: &XPath) -> Option<FieldValue> {

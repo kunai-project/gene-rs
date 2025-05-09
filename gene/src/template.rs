@@ -66,7 +66,7 @@ impl Templates {
         Self::default()
     }
 
-    /// Inserts a new string template. Under the `matches` section of a [Rule]
+    /// Inserts a new string template. Under the `matches` section of a [`Rule`]
     /// any occurrence of `{{name}}` (`name` being the template name) will be
     /// replaced by the `template`.
     #[inline]
@@ -87,7 +87,7 @@ impl Templates {
         Ok(())
     }
 
-    /// Replaces templates in the given [Rule]
+    /// Replaces templates in the given [`Rule`]
     pub fn replace(&self, r: &mut Rule) {
         if let Some(matches) = r.matches.as_mut() {
             for op in matches.keys().cloned().collect::<Vec<_>>() {

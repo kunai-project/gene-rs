@@ -12,7 +12,7 @@ pub enum PathError {
 }
 
 /// Cross Path allowing to recursively retrieve a [FieldValue](crate::FieldValue)
-/// from a structure implementing [FieldGetter](crate::FieldGetter).
+/// from a structure implementing [`FieldGetter`](crate::FieldGetter).
 ///
 /// # Example:
 ///
