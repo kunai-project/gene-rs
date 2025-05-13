@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     num::{ParseFloatError, ParseIntError, TryFromIntError},
     ops::BitAnd,
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -17,6 +18,8 @@ pub enum NumberError {
     ParseInt(#[from] ParseIntError),
     #[error("{0}")]
     ParseFloat(#[from] ParseFloatError),
+    #[error("other: {0}")]
+    Other(String),
 }
 
 /// Represents any kind of number. Do not construct enum variants
@@ -199,15 +202,15 @@ impl Number {
 /// a field from a structure can have. Many convertions
 /// from base and common types are implemented.
 #[derive(Debug, Clone, PartialEq)]
-pub enum FieldValue {
-    String(String),
+pub enum FieldValue<'field> {
+    String(Cow<'field, str>),
     Number(Number),
     Bool(bool),
     Some,
     None,
 }
 
-impl std::fmt::Display for FieldValue {
+impl std::fmt::Display for FieldValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::String(s) => write!(f, "{}", s),
@@ -219,7 +222,7 @@ impl std::fmt::Display for FieldValue {
     }
 }
 
-impl FieldValue {
+impl FieldValue<'_> {
     pub(crate) const fn type_str(&self) -> &'static str {
         match self {
             Self::Bool(_) => "bool",
@@ -230,12 +233,12 @@ impl FieldValue {
         }
     }
 
-    pub(crate) fn try_into_number(self) -> Result<Self, NumberError> {
+    pub(crate) fn string_into_number(&self) -> Result<Self, NumberError> {
         match self {
-            Self::Number(_) => Ok(self),
-            Self::String(s) => Ok(Self::Number(Number::from_str(&s)?)),
-            Self::Bool(b) => Ok(Self::Number((b as u8).into())),
-            Self::None | Self::Some => Err(NumberError::InvalidConvertion),
+            Self::String(s) => Ok(Self::Number(Number::from_str(s)?)),
+            _ => Err(NumberError::Other(String::from(
+                "enum variant is not a string",
+            ))),
         }
     }
 
@@ -257,9 +260,15 @@ impl FieldValue {
 macro_rules! impl_field_value_number {
     ($($src:ty),*) => {
         $(
-        impl From<$src> for FieldValue {
+        impl From<$src> for FieldValue<'_> {
             fn from(value: $src) -> Self {
                 Self::Number(value.into())
+            }
+        }
+
+        impl From<&$src> for FieldValue<'_> {
+            fn from(value: &$src) -> Self {
+                Self::Number((*value).into())
             }
         }
         )*
@@ -268,33 +277,75 @@ macro_rules! impl_field_value_number {
 
 impl_field_value_number!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64);
 
-impl From<Cow<'_, str>> for FieldValue {
-    fn from(value: Cow<'_, str>) -> Self {
-        Self::String(value.into())
-    }
-}
-
-impl From<&str> for FieldValue {
-    fn from(value: &str) -> Self {
-        Self::String(value.into())
-    }
-}
-
-impl From<String> for FieldValue {
-    fn from(value: String) -> Self {
+impl<'s> From<Cow<'s, str>> for FieldValue<'s> {
+    fn from(value: Cow<'s, str>) -> Self {
         Self::String(value)
     }
 }
 
-impl From<bool> for FieldValue {
+impl<'s> From<&'s Cow<'s, str>> for FieldValue<'s> {
+    fn from(value: &'s Cow<'s, str>) -> Self {
+        Self::String(value.as_ref().into())
+    }
+}
+
+impl<'s> From<Cow<'s, PathBuf>> for FieldValue<'s> {
+    fn from(value: Cow<'s, PathBuf>) -> Self {
+        value.to_string_lossy().to_string().into()
+    }
+}
+
+impl<'s> From<&'s Cow<'s, PathBuf>> for FieldValue<'s> {
+    fn from(value: &'s Cow<'s, PathBuf>) -> Self {
+        value.to_string_lossy().into()
+    }
+}
+
+impl<'s> From<&'s str> for FieldValue<'s> {
+    fn from(value: &'s str) -> Self {
+        Self::String(Cow::Borrowed(value))
+    }
+}
+
+impl From<String> for FieldValue<'_> {
+    fn from(value: String) -> Self {
+        Self::String(Cow::from(value))
+    }
+}
+
+impl<'s> From<&'s String> for FieldValue<'s> {
+    fn from(value: &'s String) -> Self {
+        Self::String(Cow::from(value))
+    }
+}
+
+impl From<PathBuf> for FieldValue<'_> {
+    fn from(value: PathBuf) -> Self {
+        Self::String(value.to_string_lossy().to_string().into())
+    }
+}
+
+impl<'f> From<&'f PathBuf> for FieldValue<'f> {
+    fn from(value: &'f PathBuf) -> Self {
+        value.to_string_lossy().into()
+    }
+}
+
+impl From<bool> for FieldValue<'_> {
     fn from(value: bool) -> Self {
         Self::Bool(value)
     }
 }
 
-impl<T> From<Option<T>> for FieldValue
+impl From<&bool> for FieldValue<'_> {
+    fn from(value: &bool) -> Self {
+        Self::Bool(*value)
+    }
+}
+
+impl<'s, T> From<Option<T>> for FieldValue<'s>
 where
-    T: Into<FieldValue>,
+    T: Into<FieldValue<'s>>,
 {
     fn from(value: Option<T>) -> Self {
         match value {
@@ -304,13 +355,14 @@ where
     }
 }
 
-impl<T> From<&Option<T>> for FieldValue
+impl<'s, T> From<&'s Option<T>> for FieldValue<'s>
 where
-    T: Into<FieldValue> + Clone,
+    T: Into<FieldValue<'s>> + Clone,
+    FieldValue<'s>: std::convert::From<&'s T>,
 {
-    fn from(value: &Option<T>) -> Self {
+    fn from(value: &'s Option<T>) -> Self {
         match value {
-            Some(b) => b.clone().into(),
+            Some(b) => b.into(),
             None => Self::None,
         }
     }
@@ -348,31 +400,24 @@ mod test {
     fn test_field_value() {
         // testing convertion to numbers
         assert_eq!(
-            FieldValue::String("42.0".into()).try_into_number().unwrap(),
+            FieldValue::String("42.0".into())
+                .string_into_number()
+                .unwrap(),
             FieldValue::Number(42.0.into())
         );
 
         assert_eq!(
             FieldValue::String("-0.42".into())
-                .try_into_number()
+                .string_into_number()
                 .unwrap(),
             FieldValue::Number(Number::from(-0.42))
         );
 
         assert_eq!(
-            FieldValue::String("-42".into()).try_into_number().unwrap(),
+            FieldValue::String("-42".into())
+                .string_into_number()
+                .unwrap(),
             FieldValue::Number(Number::from(-42))
-        );
-
-        // convertion from bool should work too
-        assert_eq!(
-            FieldValue::Bool(true).try_into_number().unwrap(),
-            FieldValue::Number(Number::from(1))
-        );
-
-        assert_eq!(
-            FieldValue::Bool(false).try_into_number().unwrap(),
-            FieldValue::Number(Number::from(0))
         );
     }
 }

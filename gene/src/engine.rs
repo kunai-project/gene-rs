@@ -174,7 +174,7 @@ impl<'s> ScanResult<'s> {
     #[inline(always)]
     pub fn contains_attack_id<S: AsRef<str>>(&self, id: S) -> bool {
         let attack_id = id.as_ref().to_ascii_uppercase();
-        
+
         self.detection
             .as_ref()
             .map(|d| d.attack.contains(&Cow::from(&attack_id)))
@@ -410,11 +410,14 @@ impl Engine {
     }
 
     /// Scan an [`Event`] with all the rules loaded in the [`Engine`]
-    pub fn scan<E: Event>(
+    pub fn scan<E>(
         &mut self,
         event: &E,
-    ) -> Result<Option<ScanResult>, (Option<ScanResult>, Error)> {
-        let mut sr: Option<ScanResult> = None;
+    ) -> Result<Option<ScanResult<'_>>, (Option<ScanResult<'_>>, Error)>
+    where
+        E: for<'e> Event<'e>,
+    {
+        let mut sr: Option<ScanResult<'_>> = None;
         let mut last_err: Option<Error> = None;
 
         let src = event.source();
@@ -436,7 +439,7 @@ impl Engine {
                         if let Some(r) = self.rules.get(r_i) {
                             // we don't need to compute rule again
                             // NB: rule might be used in several places and already computed
-                            if states.contains_key(&Cow::from(&r.name)) {
+                            if states.contains_key(&Cow::Borrowed(r.name.as_str())) {
                                 continue;
                             }
 
@@ -445,7 +448,7 @@ impl Engine {
                                 .map_err(Error::from)
                             {
                                 Ok(ok) => {
-                                    states.insert(Cow::from(&r.name), ok);
+                                    states.insert(Cow::Borrowed(&r.name), ok);
                                 }
                                 Err(e) => last_err = Some(e),
                             }
@@ -456,7 +459,7 @@ impl Engine {
 
             // if the rule has already been matched in the process
             // of dependency matching of whatever rule
-            let ok = match states.get(&Cow::from(&r.name)) {
+            let ok = match states.get(&Cow::Borrowed(r.name.as_str())) {
                 Some(&ok) => ok,
                 None => {
                     match r
@@ -494,9 +497,9 @@ mod test {
         ($name:tt, id=$id:literal, source=$source:literal, $(($path:literal, $value:expr)),*) => {
             struct $name {}
 
-            impl FieldGetter for $name{
+            impl<'f> FieldGetter<'f> for $name{
 
-                fn get_from_iter(&self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue>{
+                fn get_from_iter(&'f self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue<'f>>{
                     unimplemented!()
                 }
 
@@ -508,7 +511,7 @@ mod test {
                 }
             }
 
-            impl Event for $name {
+            impl<'e> Event<'e> for $name {
 
                 fn id(&self) -> i64{
                     $id

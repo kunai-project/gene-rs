@@ -181,11 +181,14 @@ impl FromStr for Match {
 
 impl Match {
     #[inline]
-    pub(crate) fn match_event<E: Event>(
+    pub(crate) fn match_event<E>(
         &self,
         event: &E,
         rule_state: &HashMap<Cow<'_, str>, bool>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         match self {
             Self::Direct(m) => m.match_event(event),
             Self::Indirect(m) => m.match_event(event),
@@ -228,7 +231,10 @@ impl FromStr for IndirectMatch {
 }
 
 impl IndirectMatch {
-    pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
+    pub(crate) fn match_event<E>(&self, event: &E) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         let src = event
             .get_from_path(&self.field_path)
             .ok_or(Error::FieldNotFound(
@@ -338,7 +344,10 @@ macro_rules! cmp_values {
 
 impl DirectMatch {
     #[inline]
-    pub(crate) fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
+    pub(crate) fn match_event<E>(&self, event: &E) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         if let Some(fvalue) = event.get_from_path(&self.field_path) {
             return self
                 .match_value(&fvalue)
@@ -360,7 +369,7 @@ impl DirectMatch {
         // de/serializing hexadecimal values provides more readable output using strings.
         let compat = {
             if tgt.is_string() && self.value.is_number() {
-                Some(tgt.clone().try_into_number().map_err(|_| ())?)
+                Some(tgt.string_into_number().map_err(|_| ())?)
             } else {
                 None
             }

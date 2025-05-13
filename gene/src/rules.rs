@@ -389,7 +389,10 @@ impl CompiledRule {
     // keep this function not to break tests
     #[allow(dead_code)]
     #[inline(always)]
-    fn match_event<E: Event>(&self, event: &E) -> Result<bool, Error> {
+    fn match_event<E>(&self, event: &E) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         self.condition
             .compute_for_event(event, &self.matches, &HashMap::new())
             .map_err(|e| Box::new(e).into())
@@ -397,11 +400,14 @@ impl CompiledRule {
     }
 
     #[inline(always)]
-    pub(crate) fn match_event_with_states<E: Event>(
+    pub(crate) fn match_event_with_states<E>(
         &self,
         event: &E,
         rules_states: &HashMap<Cow<'_, str>, bool>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         self.condition
             .compute_for_event(event, &self.matches, rules_states)
             .map_err(|e| Box::new(e).into())
@@ -497,7 +503,7 @@ mod test {
         ($name:tt, $(($path:literal, $value:expr)),*) => {
             struct $name {}
 
-            impl FieldGetter for $name{
+            impl<'f> FieldGetter<'f> for $name{
 
                 fn get_from_iter(&self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue>{
                     unimplemented!()
@@ -511,7 +517,7 @@ mod test {
                 }
             }
 
-            impl Event for $name {
+            impl<'e> Event<'e> for $name {
 
                 fn id(&self) -> i64{
                     42
