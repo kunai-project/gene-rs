@@ -8,28 +8,31 @@ use std::{
 use crate::{FieldValue, XPath};
 
 /// Trait representing a log event
-pub trait Event: FieldGetter {
+pub trait Event<'event>: FieldGetter<'event> {
     fn id(&self) -> i64;
     fn source(&self) -> Cow<'_, str>;
 }
 
 /// Trait representing a structure we can fetch field values
 /// from a [`XPath`]
-pub trait FieldGetter {
+pub trait FieldGetter<'field> {
     #[inline]
-    fn get_from_path(&self, path: &XPath) -> Option<FieldValue> {
+    fn get_from_path(&'field self, path: &XPath) -> Option<FieldValue<'field>> {
         self.get_from_iter(path.iter_segments())
     }
 
-    fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue>;
+    fn get_from_iter(
+        &'field self,
+        i: core::slice::Iter<'_, std::string::String>,
+    ) -> Option<FieldValue<'field>>;
 }
 
 macro_rules! impl_with_getter {
     ($(($type:ty, $getter:tt)),*) => {
         $(
-            impl FieldGetter for $type {
+            impl<'f> FieldGetter<'f> for $type {
                 #[inline]
-                fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
+                fn get_from_iter(&'f self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue<'f>> {
                     if i.len() > 0 {
                         return None;
                     }
@@ -43,13 +46,13 @@ macro_rules! impl_with_getter {
 macro_rules! impl_for_type {
     ($($type: ty),*) => {
         $(
-            impl FieldGetter for $type {
+            impl<'f> FieldGetter<'f>  for $type {
                 #[inline]
-                fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
+                fn get_from_iter(&'f self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue<'f>> {
                     if i.len() > 0 {
                         return None;
                     }
-                    Some(self.clone().into())
+                    Some(self.into())
                 }
             }
         )*
@@ -58,7 +61,8 @@ macro_rules! impl_for_type {
 
 impl_for_type!(
     Cow<'_, str>,
-    &str,
+    Cow<'_, PathBuf>,
+    str,
     String,
     i8,
     i16,
@@ -81,12 +85,15 @@ impl_with_getter!(
     (IpAddr, to_string)
 );
 
-impl<T> FieldGetter for Option<T>
+impl<'field, T> FieldGetter<'field> for Option<T>
 where
-    T: FieldGetter,
+    T: FieldGetter<'field>,
 {
     #[inline]
-    fn get_from_iter(&self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
+    fn get_from_iter(
+        &'field self,
+        i: core::slice::Iter<'_, std::string::String>,
+    ) -> Option<FieldValue<'field>> {
         match self {
             Some(v) => v.get_from_iter(i),
             None => Some(FieldValue::None),
@@ -94,15 +101,12 @@ where
     }
 }
 
-impl<T> FieldGetter for HashMap<String, T>
-where
-    T: Into<FieldValue> + Clone,
-{
+impl<'field> FieldGetter<'field> for HashMap<String, String> {
     #[inline]
     fn get_from_iter(
-        &self,
+        &'field self,
         mut i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<FieldValue> {
+    ) -> Option<FieldValue<'field>> {
         let k = match i.next() {
             Some(s) => s,
             None => return Some(FieldValue::Some),
@@ -111,7 +115,7 @@ where
         if i.len() > 0 {
             return None;
         }
-        self.get(k).cloned().map(|f| f.into())
+        self.get(k).map(|f| f.into())
     }
 }
 
@@ -135,7 +139,7 @@ mod test {
     struct LogData {
         some_float: f32,
         #[serde(rename = "serde_renamed")]
-        some_string: &'static str,
+        some_string: String,
         #[getter(rename = "event_id")]
         id: i64,
         #[getter(skip)]
@@ -168,7 +172,7 @@ mod test {
             name: "SomeLogEntry".into(),
             data: LogData {
                 some_float: 4242.0,
-                some_string: "some &'static str",
+                some_string: "some string".into(),
                 id: 42,
                 osef: 34,
                 path: PathBuf::from("/absolute/path"),
@@ -199,7 +203,7 @@ mod test {
         // check that #[serde(rename)] worked
         assert_eq!(
             entry.get_from_path(&path!(".data.serde_renamed")),
-            Some("some &'static str".into())
+            Some("some string".into())
         );
 
         // check that #[event(skip)] worked

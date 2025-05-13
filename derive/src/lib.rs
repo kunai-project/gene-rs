@@ -1,9 +1,11 @@
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use std::collections::HashMap;
 use syn::{
     parse_macro_input, parse_quote, punctuated::Punctuated, spanned::Spanned, Attribute,
-    DataStruct, DeriveInput, Expr, Generics, Meta, MetaNameValue, Token, TypeParam, WhereClause,
+    DataStruct, DeriveInput, Expr, GenericParam, Generics, Lifetime, LifetimeParam, Meta,
+    MetaNameValue, Token, TypeParam, WhereClause,
 };
 
 /// helper macro to get the expected syn::Lit enum variant from a syn::Expr
@@ -83,6 +85,10 @@ struct EventDerive {
 }
 
 impl EventDerive {
+    fn event_lifetime() -> LifetimeParam {
+        LifetimeParam::new(Lifetime::new("'event", Span::call_site()))
+    }
+
     fn parse_event_derive(input: DeriveInput) -> Result<Self, syn::Error> {
         let attrs = &input.attrs;
 
@@ -122,10 +128,38 @@ impl EventDerive {
         Ok(EventDerive { input, id, source })
     }
 
+    fn where_clause(generics: &Generics) -> Option<WhereClause> {
+        //let generics = &self.input.generics;
+        // the other predicates in where clause of the structure
+        let predicates = generics
+            .where_clause
+            .as_ref()
+            .map(|wc| wc.predicates.clone());
+        let type_params = generics.type_params().cloned().collect::<Vec<TypeParam>>();
+        let elt = Self::event_lifetime();
+
+        if type_params.is_empty() {
+            return None;
+        }
+
+        // we want any generic used in the structure to implement PartialEvent
+        parse_quote! {
+            where
+                #(#type_params: FieldGetter<#elt>,)*
+                #predicates
+        }
+    }
+
     fn expand_event(&self) -> proc_macro2::TokenStream {
         let struct_name = &self.input.ident;
+        let mut trait_generics = self.input.generics.clone();
         let generics = &self.input.generics;
-        let generic_trait_bound = FieldGetterDerive::field_getter_where_clause(generics);
+        let generic_trait_bound = Self::where_clause(generics);
+
+        let elt = Self::event_lifetime();
+        trait_generics
+            .params
+            .insert(0, GenericParam::Lifetime(elt.clone()));
 
         let impl_id = self
             .id
@@ -154,7 +188,7 @@ impl EventDerive {
             .unwrap_or_default();
 
         let expanded = quote! {
-            impl #generics Event for #struct_name #generics #generic_trait_bound{
+            impl #trait_generics Event<#elt> for #struct_name #generics #generic_trait_bound{
 
                 #impl_id
 
@@ -210,7 +244,13 @@ struct FieldGetterDerive {
 }
 
 impl FieldGetterDerive {
+    fn field_lifetime() -> LifetimeParam {
+        LifetimeParam::new(Lifetime::new("'field", Span::call_site()))
+    }
+
     fn build_match_arms(mut self, data_struct: &DataStruct) -> Result<Self, syn::Error> {
+        let flt = Self::field_lifetime();
+
         // we iterate over the enum variants
         for field in data_struct.fields.iter() {
             // name of the variant
@@ -247,7 +287,7 @@ impl FieldGetterDerive {
             span =>
             #(#fields)|* => {
                 #[allow(clippy::redundant_closure_call)]
-                |x: &dyn FieldGetter, i: core::slice::Iter<'_, std::string::String>| -> Option<FieldValue> {
+                |x: &#flt dyn FieldGetter<#flt>, i: core::slice::Iter<'_, std::string::String>| -> Option<FieldValue<#flt>> {
                     x.get_from_iter(i)
                 }(&self.#field_name, i)
             }});
@@ -255,7 +295,7 @@ impl FieldGetterDerive {
         Ok(self)
     }
 
-    fn field_getter_where_clause(generics: &Generics) -> Option<WhereClause> {
+    fn where_clause(generics: &Generics) -> Option<WhereClause> {
         //let generics = &self.input.generics;
         // the other predicates in where clause of the structure
         let predicates = generics
@@ -268,10 +308,12 @@ impl FieldGetterDerive {
             return None;
         }
 
+        let flt = Self::field_lifetime();
+
         // we want any generic used in the structure to implement PartialEvent
         parse_quote! {
             where
-                #(#type_params: FieldGetter,)*
+                #(#type_params: FieldGetter<#flt>,)*
                 #predicates
         }
     }
@@ -304,13 +346,19 @@ impl FieldGetterDerive {
     fn expand_partial_event(&self) -> proc_macro2::TokenStream {
         let struct_name = &self.input.ident;
         let generics = &self.input.generics;
+        let mut trait_generics = self.input.generics.clone();
         let arms = &self.get_arms;
-        let generic_trait_bound = Self::field_getter_where_clause(&self.input.generics);
+        let generic_trait_bound = Self::where_clause(&self.input.generics);
+
+        let flt = Self::field_lifetime();
+        trait_generics
+            .params
+            .insert(0, GenericParam::Lifetime(flt.clone()));
 
         let expand = quote! {
-            impl #generics FieldGetter for #struct_name #generics #generic_trait_bound{
+            impl #trait_generics FieldGetter<#flt> for #struct_name #generics #generic_trait_bound{
                 #[inline(always)]
-                fn get_from_iter(&self, mut i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue> {
+                fn get_from_iter(&#flt self, mut i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue<#flt>> {
 
                     let field = match i.next() {
                         Some(s) => s,
@@ -324,6 +372,7 @@ impl FieldGetterDerive {
                 }
             }
         };
+
         expand
     }
 }

@@ -83,12 +83,15 @@ impl FromStr for Expr {
 
 impl Expr {
     #[inline]
-    fn compute_for_event<E: Event>(
+    fn compute_for_event<E>(
         &self,
         event: &E,
         operands: &HashMap<String, Match>,
         rule_states: &HashMap<Cow<'_, str>, bool>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         match self {
             Expr::AllOfThem => {
                 for m in operands.values() {
@@ -340,12 +343,15 @@ impl From<Expr> for Condition {
 }
 
 impl Condition {
-    pub(crate) fn compute_for_event<E: Event>(
+    pub(crate) fn compute_for_event<E>(
         &self,
         event: &E,
         operands: &HashMap<String, Match>,
         rules_states: &HashMap<Cow<'_, str>, bool>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
         self.expr.compute_for_event(event, operands, rules_states)
     }
 }
