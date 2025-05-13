@@ -3,7 +3,7 @@ resolver = "2"
 members = ["gene", "derive"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 rust-version = "1.83.0"
 authors = ["Quentin JEROME"]
 edition = "2021"
