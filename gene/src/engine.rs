@@ -413,7 +413,7 @@ impl Engine {
     pub fn scan<E>(
         &mut self,
         event: &E,
-    ) -> Result<Option<ScanResult<'_>>, (Option<ScanResult<'_>>, Error)>
+    ) -> Result<Option<ScanResult<'_>>, Box<(Option<ScanResult<'_>>, Error)>>
     where
         E: for<'e> Event<'e>,
     {
@@ -488,7 +488,7 @@ impl Engine {
         }
 
         if let Some(err) = last_err {
-            return Err((sr, err));
+            return Err((sr, err).into());
         }
 
         Ok(sr)
