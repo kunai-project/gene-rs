@@ -78,7 +78,7 @@ where
 
                 while let Some((key, value)) = map.next_entry()? {
                     if values.contains_key(&key) {
-                        return Err(de::Error::custom(format!("duplicate key found: {:?}", key)));
+                        return Err(de::Error::custom(format!("duplicate key found: {key:?}")));
                     }
                     values.insert(key, value);
                 }

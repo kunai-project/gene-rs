@@ -78,9 +78,9 @@ impl TryFrom<Number> for f64 {
 impl std::fmt::Display for Number {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Float(v) => write!(f, "{}", v),
-            Self::Uint(v) => write!(f, "{}", v),
-            Self::Int(v) => write!(f, "{}", v),
+            Self::Float(v) => write!(f, "{v}"),
+            Self::Uint(v) => write!(f, "{v}"),
+            Self::Int(v) => write!(f, "{v}"),
         }
     }
 }
@@ -213,9 +213,9 @@ pub enum FieldValue<'field> {
 impl std::fmt::Display for FieldValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::String(s) => write!(f, "{}", s),
-            Self::Number(s) => write!(f, "{}", s),
-            Self::Bool(b) => write!(f, "{}", b),
+            Self::String(s) => write!(f, "{s}"),
+            Self::Number(s) => write!(f, "{s}"),
+            Self::Bool(b) => write!(f, "{b}"),
             Self::Some => write!(f, "some"),
             Self::None => write!(f, "none"),
         }
