@@ -443,12 +443,18 @@ impl Engine {
                                 continue;
                             }
 
+                            // if the rule cannot match we don't need to go further
+                            if !r.can_match_on(event.source(), id) {
+                                states.insert(Cow::Borrowed(r.name.as_str()), false);
+                                continue;
+                            }
+
                             match r
                                 .match_event_with_states(event, &states)
                                 .map_err(Error::from)
                             {
                                 Ok(ok) => {
-                                    states.insert(Cow::Borrowed(&r.name), ok);
+                                    states.insert(Cow::Borrowed(r.name.as_str()), ok);
                                 }
                                 Err(e) => last_err = Some(e),
                             }
@@ -905,5 +911,49 @@ type: detection
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn test_rule_dependency_bug() {
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+name: dep.rule
+type: dependency
+match-on:
+    events: 
+        test: [ 1 ]
+matches:
+    $ip: .ipv6 == '::1'
+condition: any of them
+
+---
+
+name: main
+matches:
+    $dep1: rule(dep.rule)
+condition: all of them
+
+---
+
+name: match.all
+
+"#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        fake_event!(Dummy, id = 1, source = "test", (".ipv6", "::1"));
+        let sr = e.scan(&Dummy {}).unwrap().unwrap();
+        assert!(sr.contains_detection("main"));
+        assert!(!sr.contains_detection("dep.rule"));
+        assert!(sr.contains_detection("match.all"));
+
+        fake_event!(Dummy2, id = 2, source = "test", (".ip", "8.8.8.8"));
+        let sr = e.scan(&Dummy2 {}).unwrap().unwrap();
+        assert!(!sr.contains_detection("depends"));
+        assert!(!sr.contains_detection("dep.rule"));
+        assert!(sr.contains_detection("match.all"));
     }
 }
