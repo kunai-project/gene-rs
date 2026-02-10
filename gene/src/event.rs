@@ -102,21 +102,24 @@ where
     }
 }
 
-impl<'field> FieldGetter<'field> for HashMap<String, String> {
+impl<'f, T> FieldGetter<'f> for HashMap<String, T>
+where
+    T: FieldGetter<'f>,
+{
     #[inline]
     fn get_from_iter(
-        &'field self,
+        &'f self,
         mut i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<FieldValue<'field>> {
+    ) -> Option<FieldValue<'f>> {
         let k = match i.next() {
             Some(s) => s,
-            None => return Some(FieldValue::Some),
+            None => {
+                // No key to look up, return Some to indicate map existence
+                return Some(FieldValue::Some);
+            }
         };
 
-        if i.len() > 0 {
-            return None;
-        }
-        self.get(k).map(|f| f.into())
+        self.get(k)?.get_from_iter(i)
     }
 }
 
