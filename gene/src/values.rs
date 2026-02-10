@@ -210,18 +210,6 @@ pub enum FieldValue<'field> {
     None,
 }
 
-impl std::fmt::Display for FieldValue<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::String(s) => write!(f, "{s}"),
-            Self::Number(s) => write!(f, "{s}"),
-            Self::Bool(b) => write!(f, "{b}"),
-            Self::Some => write!(f, "some"),
-            Self::None => write!(f, "none"),
-        }
-    }
-}
-
 impl FieldValue<'_> {
     pub(crate) const fn type_str(&self) -> &'static str {
         match self {
