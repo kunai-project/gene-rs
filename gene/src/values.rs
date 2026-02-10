@@ -327,7 +327,7 @@ impl<'s> From<&'s String> for FieldValue<'s> {
 
 impl From<PathBuf> for FieldValue<'_> {
     fn from(value: PathBuf) -> Self {
-        Self::String(value.to_string_lossy().to_string().into())
+        value.to_string_lossy().to_string().into()
     }
 }
 
