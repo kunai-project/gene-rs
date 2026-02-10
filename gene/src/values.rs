@@ -199,7 +199,7 @@ impl Number {
 }
 
 /// A FieldValue is an enum representing the different values
-/// a field from a structure can have. Many convertions
+/// a field from a structure can have. Many conversions
 /// from base and common types are implemented.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldValue<'field> {

@@ -214,7 +214,7 @@ pub enum Error {
 
 /// Structure to represent an [`Event`] scanning engine.
 /// Its role being to scan any structure implementing [`Event`] trait
-/// with all the [Rules](Rule) loaded into the engine
+/// with all the [`rules::Rule`] loaded into the engine
 ///
 /// # Example
 ///

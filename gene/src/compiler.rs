@@ -52,7 +52,7 @@ impl Compiler {
     }
 
     /// Wrapper around [Compiler::load_templates_from_reader] loading a rules
-    /// from a struct implementing [AsRef<str>]
+    /// from a struct implementing [`AsRef<str>`]
     pub fn load_templates_from_str<S: AsRef<str>>(&mut self, s: S) -> Result<(), Error> {
         let c = io::Cursor::new(s.as_ref());
         self.load_templates_from_reader(c)
@@ -76,7 +76,7 @@ impl Compiler {
     }
 
     /// Wrapper around [Compiler::load_rules_from_reader] loading a rules
-    /// from a struct implementing [AsRef<str>]
+    /// from a struct implementing [`AsRef<str>`]
     pub fn load_rules_from_str<S: AsRef<str>>(&mut self, s: S) -> Result<(), Error> {
         let c = io::Cursor::new(s.as_ref());
         self.load_rules_from_reader(c)
