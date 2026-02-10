@@ -377,6 +377,15 @@ impl DirectMatch {
 
         let fv = compat.as_ref().unwrap_or(tgt);
 
+        if let FieldValue::Vector(v) = fv {
+            for fv in v.iter() {
+                if self.match_value(fv)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
         match self.op {
             Op::Eq => cmp_values!(String, fv, ==, self.value)
                 .or({
