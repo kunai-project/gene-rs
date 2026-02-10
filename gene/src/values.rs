@@ -307,6 +307,12 @@ impl<'s> From<&'s str> for FieldValue<'s> {
     }
 }
 
+impl<'s> From<&&'s str> for FieldValue<'s> {
+    fn from(value: &&'s str) -> Self {
+        Self::String(Cow::Borrowed(value))
+    }
+}
+
 impl From<String> for FieldValue<'_> {
     fn from(value: String) -> Self {
         Self::String(Cow::from(value))
