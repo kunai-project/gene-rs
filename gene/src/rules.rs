@@ -505,11 +505,11 @@ mod test {
 
             impl<'f> FieldGetter<'f> for $name{
 
-                fn get_from_iter(&self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue>{
+                fn get_from_iter(&self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue<'_>>{
                     unimplemented!()
                 }
 
-                fn get_from_path(&self, path: &crate::XPath) -> Option<$crate::FieldValue> {
+                fn get_from_path(&self, path: &crate::XPath) -> Option<$crate::FieldValue<'_>> {
                     match path.to_string_lossy().as_ref() {
                         $($path => Some($value.into()),)*
                         _ => None,
