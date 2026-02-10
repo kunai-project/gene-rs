@@ -334,4 +334,66 @@ mod test {
             .get_from_path(&path!(".numbers.first"))
             .is_none());
     }
+
+    #[test]
+    fn test_hashmap_field_getter() {
+        use std::collections::HashMap;
+
+        // Test direct HashMap implementation
+        let mut map = HashMap::new();
+        map.insert("name".to_string(), "test".to_string());
+
+        // Test accessing existing keys
+        assert_eq!(map.get_from_path(&path!(".name")), Some("test".into()));
+
+        // Test accessing non-existing keys
+        assert_eq!(map.get_from_path(&path!(".unknown")), None);
+
+        // Test that nested access returns None (more than one segment)
+        assert_eq!(map.get_from_path(&path!(".name.nested")), None);
+
+        // Test in a struct context
+        #[derive(FieldGetter)]
+        struct TestStruct {
+            data: HashMap<String, String>,
+            metadata: HashMap<String, i32>,
+        }
+
+        let mut data_map = HashMap::new();
+        data_map.insert("key1".to_string(), "value1".to_string());
+        data_map.insert("key2".to_string(), "value2".to_string());
+
+        let mut metadata_map = HashMap::new();
+        metadata_map.insert("count".to_string(), 100);
+        metadata_map.insert("size".to_string(), 200);
+
+        let test_struct = TestStruct {
+            data: data_map,
+            metadata: metadata_map,
+        };
+
+        // Test accessing hashmap fields directly
+        assert_eq!(
+            test_struct.get_from_path(&path!(".data")),
+            Some(FieldValue::Some)
+        );
+        assert_eq!(
+            test_struct.get_from_path(&path!(".metadata")),
+            Some(FieldValue::Some)
+        );
+
+        // Test accessing nested hashmap values
+        assert_eq!(
+            test_struct.get_from_path(&path!(".data.key1")),
+            Some("value1".into())
+        );
+        assert_eq!(
+            test_struct.get_from_path(&path!(".metadata.count")),
+            Some(100i32.into())
+        );
+
+        // Test accessing non-existing nested keys
+        assert_eq!(test_struct.get_from_path(&path!(".data.unknown")), None);
+        assert_eq!(test_struct.get_from_path(&path!(".metadata.missing")), None);
+    }
 }
