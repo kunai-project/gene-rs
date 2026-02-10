@@ -199,32 +199,28 @@ impl Number {
 }
 
 /// A FieldValue is an enum representing the different values
-/// a field from a structure can have. Many convertions
+/// a field from a structure can have. Many conversions
 /// from base and common types are implemented.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldValue<'field> {
+    /// A vector of field values.
+    Vector(Vec<FieldValue<'field>>),
+    /// A string value.
     String(Cow<'field, str>),
+    /// A numeric value.
     Number(Number),
+    /// A boolean value.
     Bool(bool),
+    /// A field that could be anything.
     Some,
+    /// A None value from an [`Option<T>`] field.
     None,
-}
-
-impl std::fmt::Display for FieldValue<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::String(s) => write!(f, "{s}"),
-            Self::Number(s) => write!(f, "{s}"),
-            Self::Bool(b) => write!(f, "{b}"),
-            Self::Some => write!(f, "some"),
-            Self::None => write!(f, "none"),
-        }
-    }
 }
 
 impl FieldValue<'_> {
     pub(crate) const fn type_str(&self) -> &'static str {
         match self {
+            Self::Vector(_) => "vector",
             Self::Bool(_) => "bool",
             Self::String(_) => "string",
             Self::Number(_) => "number",
@@ -254,6 +250,12 @@ impl FieldValue<'_> {
     #[inline(always)]
     pub(crate) const fn is_none(&self) -> bool {
         matches!(self, FieldValue::None)
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn is_vector(&self) -> bool {
+        matches!(self, FieldValue::Vector(_))
     }
 }
 
@@ -307,6 +309,12 @@ impl<'s> From<&'s str> for FieldValue<'s> {
     }
 }
 
+impl<'s> From<&&'s str> for FieldValue<'s> {
+    fn from(value: &&'s str) -> Self {
+        Self::String(Cow::Borrowed(value))
+    }
+}
+
 impl From<String> for FieldValue<'_> {
     fn from(value: String) -> Self {
         Self::String(Cow::from(value))
@@ -321,7 +329,7 @@ impl<'s> From<&'s String> for FieldValue<'s> {
 
 impl From<PathBuf> for FieldValue<'_> {
     fn from(value: PathBuf) -> Self {
-        Self::String(value.to_string_lossy().to_string().into())
+        value.to_string_lossy().to_string().into()
     }
 }
 
@@ -367,6 +375,51 @@ where
         }
     }
 }
+
+macro_rules! impl_field_value_vec_conversions {
+    ($($ty:ty),*) => {
+        $(
+            impl<'s> From<&'s [$ty]> for FieldValue<'s> {
+                fn from(value: &'s [$ty]) -> Self {
+                    Self::Vector(value.iter().map(|t| t.into()).collect())
+                }
+            }
+
+            impl<'s> From<&'s Vec<$ty>> for FieldValue<'s> {
+                fn from(value: &'s Vec<$ty>) -> Self {
+                    value.as_slice().into()
+                }
+            }
+
+            impl<'s> From<Vec<$ty>> for FieldValue<'s> {
+                fn from(value: Vec<$ty>) -> Self {
+                    Self::Vector(value.into_iter().map(|t| t.into()).collect())
+                }
+            }
+        )*
+    };
+}
+
+// Apply the macro for common types
+impl_field_value_vec_conversions!(
+    String,
+    &'s str,
+    Cow<'s, str>,
+    PathBuf,
+    i8,
+    i16,
+    i32,
+    i64,
+    isize,
+    u8,
+    u16,
+    u32,
+    u64,
+    usize,
+    f32,
+    f64,
+    bool
+);
 
 #[cfg(test)]
 mod test {

@@ -1,4 +1,5 @@
 #![deny(unused_imports)]
+#![allow(clippy::derivable_impls)]
 
 mod event;
 pub use event::{Event, FieldGetter};

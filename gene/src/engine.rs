@@ -214,7 +214,7 @@ pub enum Error {
 
 /// Structure to represent an [`Event`] scanning engine.
 /// Its role being to scan any structure implementing [`Event`] trait
-/// with all the [Rules](Rule) loaded into the engine
+/// with all the [`rules::Rule`] loaded into the engine
 ///
 /// # Example
 ///
@@ -509,7 +509,7 @@ mod test {
                     unimplemented!()
                 }
 
-                fn get_from_path(&self, path: &crate::XPath) -> Option<$crate::FieldValue> {
+                fn get_from_path(&self, path: &crate::XPath) -> Option<$crate::FieldValue<'_>> {
                     match path.to_string_lossy().as_ref() {
                         $($path => Some($value.into()),)*
                         _ => None,
@@ -553,6 +553,32 @@ actions: ["do_something"]
         assert!(!sr.has_filter());
         assert!(!sr.is_empty());
         assert!(!sr.has_only_filter());
+    }
+
+    #[test]
+    fn test_basic_match_scan_vector() {
+        let mut c = Compiler::new();
+
+        c.load_rules_from_str(
+            r#"
+name: test
+matches:
+    $a: .ip ~= "^8\.8\."
+condition: $a
+"#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+        fake_event!(
+            Dummy,
+            id = 1,
+            source = "test",
+            (".ip", vec!["9.9.9.9", "8.8.4.4"])
+        );
+        let sr = e.scan(&Dummy {}).unwrap().unwrap();
+        assert!(sr.has_detection());
+        assert!(sr.contains_detection("test"));
     }
 
     #[test]
@@ -921,7 +947,7 @@ type: detection
 name: dep.rule
 type: dependency
 match-on:
-    events: 
+    events:
         test: [ 1 ]
 matches:
     $ip: .ipv6 == '::1'
