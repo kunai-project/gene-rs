@@ -62,6 +62,7 @@ macro_rules! impl_for_type {
 impl_for_type!(
     Cow<'_, str>,
     Cow<'_, PathBuf>,
+    &'_ str,
     str,
     String,
     i8,
