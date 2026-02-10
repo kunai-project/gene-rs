@@ -120,6 +120,48 @@ impl<'field> FieldGetter<'field> for HashMap<String, String> {
     }
 }
 
+macro_rules! impl_field_getter_for_vec {
+    ($($ty:ty),*) => {
+        $(
+            impl<'f> FieldGetter<'f> for Vec<$ty>
+            where
+                $ty: Into<FieldValue<'f>>,
+            {
+                #[inline]
+                fn get_from_iter(
+                    &'f self,
+                    i: core::slice::Iter<'_, std::string::String>,
+                ) -> Option<FieldValue<'f>> {
+                    if i.len() > 0 {
+                        return None;
+                    }
+
+                    Some(FieldValue::Vector(self.iter().map(|v| v.into()).collect()))
+                }
+            }
+        )*
+    };
+}
+
+// Apply the macro for common types
+impl_field_getter_for_vec!(
+    String,
+    Cow<'f, str>,
+    Cow<'f, PathBuf>,
+    &'f str,
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    u64,
+    f32,
+    f64,
+    bool
+);
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -256,5 +298,37 @@ mod test {
         assert!(event.get_from_path(&path!(".data")).is_some());
         // None must be returned if trying to get a non existing field
         assert!(event.get_from_path(&path!(".unknown")).is_none());
+    }
+
+    #[test]
+    fn test_vec_field_getter() {
+        // Test in a struct context
+        #[derive(FieldGetter)]
+        struct TestStruct {
+            items: Vec<String>,
+            numbers: Vec<i32>,
+        }
+
+        let test_struct = TestStruct {
+            items: vec!["first".into(), "second".into()],
+            numbers: vec![10, 20, 30],
+        };
+
+        // Test accessing vec fields directly
+        assert!(test_struct
+            .get_from_path(&path!(".items"))
+            .unwrap()
+            .is_vector());
+
+        assert!(test_struct
+            .get_from_path(&path!(".numbers"))
+            .unwrap()
+            .is_vector());
+
+        // Test that nested access returns None (as expected by the implementation)
+        assert!(test_struct.get_from_path(&path!(".items.0")).is_none());
+        assert!(test_struct
+            .get_from_path(&path!(".numbers.first"))
+            .is_none());
     }
 }
