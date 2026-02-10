@@ -509,7 +509,7 @@ mod test {
                     unimplemented!()
                 }
 
-                fn get_from_path(&self, path: &crate::XPath) -> Option<$crate::FieldValue> {
+                fn get_from_path(&self, path: &crate::XPath) -> Option<$crate::FieldValue<'_>> {
                     match path.to_string_lossy().as_ref() {
                         $($path => Some($value.into()),)*
                         _ => None,
