@@ -556,6 +556,32 @@ actions: ["do_something"]
     }
 
     #[test]
+    fn test_basic_match_scan_vector() {
+        let mut c = Compiler::new();
+
+        c.load_rules_from_str(
+            r#"
+name: test
+matches:
+    $a: .ip ~= "^8\.8\."
+condition: $a
+"#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+        fake_event!(
+            Dummy,
+            id = 1,
+            source = "test",
+            (".ip", vec!["9.9.9.9", "8.8.4.4"])
+        );
+        let sr = e.scan(&Dummy {}).unwrap().unwrap();
+        assert!(sr.has_detection());
+        assert!(sr.contains_detection("test"));
+    }
+
+    #[test]
     fn test_basic_filter_scan() {
         let mut c = Compiler::new();
         c.load_rules_from_str(
@@ -921,7 +947,7 @@ type: detection
 name: dep.rule
 type: dependency
 match-on:
-    events: 
+    events:
         test: [ 1 ]
 matches:
     $ip: .ipv6 == '::1'
