@@ -57,10 +57,10 @@ pub struct Filter<'s> {
 /// [`Engine`].
 #[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScanResult<'s> {
-    /// If any contains [`Detection`] information resulting from the scan
+    /// If any, contains [`Detection`] information resulting from the scan
     #[getter(skip)]
     pub detection: Option<Detection<'s>>,
-    /// If any contains [`Filter`] information resulting from the scan
+    /// If any, contains [`Filter`] information resulting from the scan
     #[getter(skip)]
     pub filter: Option<Filter<'s>>,
 }
