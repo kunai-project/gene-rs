@@ -7,20 +7,125 @@ use std::{
 
 use crate::{FieldValue, XPath};
 
-/// Trait representing a log event
+/// Trait representing a log event that can be scanned by the engine.
+///
+/// Events provide access to their unique identifier, source, and field values
+/// through the [`FieldGetter`] trait. This trait is typically derived using
+/// the [`Event`] derive macro from `gene_derive`.
+///
+/// # Examples
+///
+/// ```
+/// use gene::{FieldValue, Event, FieldGetter};
+/// use gene_derive::{Event, FieldGetter};
+/// use std::borrow::Cow;
+///
+/// // Simple event with derive macro
+/// #[derive(Event, FieldGetter)]
+/// #[event(id = 42, source = "syslog".into())]
+/// struct SyslogEvent {
+///     message: String,
+///     severity: u8,
+/// }
+/// ```
 pub trait Event<'event>: FieldGetter<'event> {
+    /// Returns the unique identifier for this event.
+    ///
+    /// The ID is used by rules to determine which events they apply to
+    /// through the `match-on` directive.
     fn id(&self) -> i64;
+
+    /// Returns the source of this event.
+    ///
+    /// The source is used by rules to determine which events they apply to
+    /// through the `match-on` directive.
     fn source(&self) -> Cow<'_, str>;
 }
 
-/// Trait representing a structure we can fetch field values
-/// from a [`XPath`]
+/// Trait for fetching field values from structured data using XPath-like paths.
+///
+/// Implementors of this trait provide access to their fields through two methods:
+/// - `get_from_path`: The primary interface using [`XPath`] expressions
+/// - `get_from_iter`: A lower-level interface using path segment iterators
+///
+/// This trait is typically implemented automatically via the [`FieldGetter`] derive macro,
+/// but can be implemented manually for custom data structures.
+///
+/// # Examples
+///
+/// ```
+/// use gene::{FieldGetter, FieldValue};
+/// use std::net::IpAddr;
+///
+/// struct NetworkEvent {
+///     source_ip: IpAddr,
+///     destination_ip: IpAddr,
+///     port: u16,
+/// }
+///
+/// impl<'f> FieldGetter<'f> for NetworkEvent {
+///     fn get_from_iter(
+///         &'f self,
+///         mut i: core::slice::Iter<'_, std::string::String>,
+///     ) -> Option<FieldValue<'f>> {
+///         match i.next().map(|s| s.as_str()) {
+///             Some("source_ip") => Some(self.source_ip.to_string().into()),
+///             Some("destination_ip") => Some(self.destination_ip.to_string().into()),
+///             Some("port") => Some(self.port.into()),
+///             _ => None,
+///         }
+///     }
+/// }
+/// ```
+///
+/// # Field Value Types
+///
+/// The trait returns [`FieldValue`] enum which can represent:
+/// - Primitive types (numbers, booleans, strings)
+/// - Complex types (IP addresses, paths, etc.)
+/// - Collections (vectors, hash maps)
+/// - Optional/nested values
+///
+/// Rules use these field values for pattern matching and condition evaluation.
 pub trait FieldGetter<'field> {
+    /// Gets a field value using an [`XPath`] expression.
+    ///
+    /// This is the primary method for field access and is called by the engine
+    /// when evaluating rule conditions. The default implementation delegates
+    /// to `get_from_iter` for convenience.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The XPath expression identifying the field to retrieve
+    ///
+    /// # Returns
+    ///
+    /// * `Some(FieldValue)` if the field exists and can be accessed
+    /// * `None` if the field does not exist or cannot be accessed
+    ///
+    /// # Notes
+    ///
+    /// Most implementations should rely on the default implementation and
+    /// override [`Self::get_from_iter`] instead of overriding this method.
     #[inline]
     fn get_from_path(&'field self, path: &XPath) -> Option<FieldValue<'field>> {
         self.get_from_iter(path.iter_segments())
     }
 
+    /// Gets a field value using an iterator of path segments.
+    ///
+    /// This lower-level method provides direct access to path segments for
+    /// implementors who need more control over path processing. It's called
+    /// by the default implementation of `get_from_path`.
+    ///
+    /// # Arguments
+    ///
+    /// * `i` - An iterator over the path segments
+    ///
+    /// # Returns
+    ///
+    /// * `Some(FieldValue)` if the field exists and can be accessed
+    /// * `None` if the field does not exist or cannot be accessed
     fn get_from_iter(
         &'field self,
         i: core::slice::Iter<'_, std::string::String>,
