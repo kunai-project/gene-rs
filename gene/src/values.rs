@@ -1,3 +1,53 @@
+//! Field value representations and number handling for the Gene event scanning engine.
+//!
+//! This module provides types for representing field values extracted from events
+//! and performing operations on them. It includes:
+//!
+//! - [`Number`]: Unified numeric type supporting integers and floats
+//! - [`NumberError`]: Errors during number parsing and conversion
+//! - [`FieldValue`]: Enum representing any field value type
+//! - Conversion implementations for various Rust types
+//!
+//! # Number Handling
+//!
+//! The [`Number`] enum provides a unified representation for numeric values:
+//! - Signed integers (`Int(i64)`)
+//! - Unsigned integers (`Uint(u64)`)
+//! - Floating-point numbers (`Float(f64)`)
+//!
+//! Variant selection is automatic based on value properties:
+//! - Negative values → `Int(i64)`
+//! - Non-negative values → `Uint(u64)`
+//! - Floating-point values → `Float(f64)`
+//!
+//! # Field Values
+//!
+//! The [`FieldValue`] enum represents any value that can be extracted from an event:
+//! - Strings and paths
+//! - Numbers (via [`Number`])
+//! - Booleans
+//! - Optional values
+//! - Vectors and collections
+//!
+//! # Usage
+//!
+//! ```rust
+//! use gene::values::{Number, FieldValue};
+//!
+//! // Create numbers from various types
+//! let n1: Number = 42u64.into();
+//! let n2: Number = (-5i64).into();
+//! let n3: Number = 3.14f64.into();
+//!
+//! // Parse numbers from strings
+//! let n4 = Number::parse("0x1F").unwrap();
+//!
+//! // Create field values
+//! let fv1: FieldValue = "hello".into();
+//! let fv2: FieldValue = 42u64.into();
+//! let fv3: FieldValue = Some("value").into();
+//! ```
+
 use std::{
     borrow::Cow,
     num::{ParseFloatError, ParseIntError, TryFromIntError},
@@ -8,28 +58,87 @@ use std::{
 
 use thiserror::Error;
 
+/// Errors that can occur during number parsing and conversion operations.
+///
+/// This enum represents all possible errors that can occur when working with
+/// numeric values in the engine, including parsing from strings, converting
+/// between numeric types, and handling type mismatches.
 #[derive(Debug, Error, PartialEq)]
 pub enum NumberError {
-    #[error("")]
-    InvalidConvertion,
+    /// Invalid conversion between numeric types.
+    ///
+    /// This error occurs when a conversion between numeric types is not possible
+    /// due to value constraints or type incompatibilities. For example, converting
+    /// a float value that exceeds integer range.
+    #[error("invalid conversion")]
+    InvalidConversion,
+
+    /// Error during integer conversion.
+    ///
+    /// Wraps errors from `TryFromIntError` that occur when converting between
+    /// integer types or when integer values are out of range for the target type.
     #[error("{0}")]
     TryFromInt(#[from] TryFromIntError),
+
+    /// Error during integer parsing.
+    ///
+    /// Wraps errors from `ParseIntError` that occur when parsing integer values
+    /// from strings, such as invalid digit sequences or overflow.
     #[error("{0}")]
     ParseInt(#[from] ParseIntError),
+
+    /// Error during float parsing.
+    ///
+    /// Wraps errors from `ParseFloatError` that occur when parsing floating-point
+    /// values from strings, such as invalid number formats.
     #[error("{0}")]
     ParseFloat(#[from] ParseFloatError),
+
+    /// Other number-related errors.
+    ///
+    /// Generic error variant for number-related issues that don't fit the
+    /// specific categories above. The string contains a descriptive error message.
     #[error("other: {0}")]
     Other(String),
 }
 
-/// Represents any kind of number. Do not construct enum variants
-/// by yourself because there is some logic behind the variant attribution.
-/// For instance an positive i64 will end up being a Uint variant. So,
-/// if a Number enum needs to be constructed use `from` implementations
+/// Represents any kind of number in the engine.
+///
+/// This enum provides a unified type for numeric values that can be used across
+/// different rule operations and field types. It supports signed integers, unsigned
+/// integers, and floating-point numbers.
+///
+/// # Variant Selection
+///
+/// The variant used for a given numeric value is determined automatically based
+/// on the value's properties:
+/// - Negative values become `Int(i64)`
+/// - Non-negative values that fit in `u64` become `Uint(u64)`
+/// - Floating-point values become `Float(f64)`
+///
+/// # Construction
+///
+/// Do not construct `Number` enum variants directly. Instead, use the `From` trait
+/// implementations to ensure proper variant selection. This guarantees consistent
+/// behavior across the engine.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Number {
+    /// Signed integer value.
+    ///
+    /// Contains values that are negative or zero. Positive values that could fit
+    /// in `u64` are represented as `Uint` variants instead.
     Int(i64),
+
+    /// Unsigned integer value.
+    ///
+    /// Contains non-negative values that fit within the `u64` range. This variant
+    /// is used for positive integers to optimize storage and comparison operations.
     Uint(u64),
+
+    /// Floating-point value.
+    ///
+    /// Contains values with decimal precision. All floating-point numbers are
+    /// represented using `f64` precision.
     Float(f64),
 }
 
@@ -41,7 +150,7 @@ impl TryFrom<Number> for i64 {
                 if v >= i64::MIN as f64 && v <= i64::MAX as f64 {
                     return Ok(v as i64);
                 }
-                Err(NumberError::InvalidConvertion)
+                Err(NumberError::InvalidConversion)
             }
             Number::Uint(v) => v.try_into().map_err(NumberError::TryFromInt),
             Number::Int(v) => Ok(v),
@@ -57,7 +166,7 @@ impl TryFrom<Number> for u64 {
                 if v >= 0.0 && v <= u64::MAX as f64 {
                     return Ok(v as u64);
                 }
-                Err(NumberError::InvalidConvertion)
+                Err(NumberError::InvalidConversion)
             }
             Number::Uint(v) => Ok(v),
             Number::Int(v) => v.try_into().map_err(NumberError::TryFromInt),
@@ -70,7 +179,7 @@ impl TryFrom<Number> for f64 {
     fn try_from(value: Number) -> Result<Self, Self::Error> {
         match value {
             Number::Float(v) => Ok(v),
-            _ => Err(NumberError::InvalidConvertion),
+            _ => Err(NumberError::InvalidConversion),
         }
     }
 }
@@ -156,6 +265,41 @@ impl FromStr for Number {
 }
 
 impl Number {
+    /// Parses a string into a `Number`.
+    ///
+    /// This method supports multiple numeric formats:
+    /// - Decimal integers (positive and negative)
+    /// - Floating-point numbers
+    /// - Hexadecimal values (with `0x` prefix)
+    ///
+    /// The parser automatically selects the appropriate variant based on the
+    /// string format and value properties. Hexadecimal values are always parsed
+    /// as unsigned integers, negative values as signed integers, and values with
+    /// decimal points as floating-point numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NumberError` if the string cannot be parsed as a valid number.
+    /// This includes invalid number formats, out-of-range values, and malformed
+    /// hexadecimal literals.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::values::Number;
+    ///
+    /// let n1 = Number::parse("42").unwrap();
+    /// assert!(matches!(n1, Number::Uint(_)));
+    ///
+    /// let n2 = Number::parse("-5").unwrap();
+    /// assert!(matches!(n2, Number::Int(_)));
+    ///
+    /// let n3 = Number::parse("3.14").unwrap();
+    /// assert!(matches!(n3, Number::Float(_)));
+    ///
+    /// let n4 = Number::parse("0x1F").unwrap();
+    /// assert!(matches!(n4, Number::Uint(_)));
+    /// ```
     pub fn parse<S: AsRef<str>>(s: S) -> Result<Self, NumberError> {
         let s = s.as_ref();
         // looks like an hexadecimal value
@@ -182,16 +326,30 @@ impl Number {
         Ok(u64::from_str(s)?.into())
     }
 
+    /// Returns `true` if this number is an unsigned integer.
+    ///
+    /// This method checks if the number is stored in the `Uint(u64)` variant.
+    /// Unsigned integers are used for non-negative values that fit within the
+    /// `u64` range.
     #[inline(always)]
     pub fn is_uint(&self) -> bool {
         matches!(self, Self::Uint(_))
     }
 
+    /// Returns `true` if this number is a floating-point value.
+    ///
+    /// This method checks if the number is stored in the `Float(f64)` variant.
+    /// Floating-point numbers are used for values with decimal precision.
     #[inline(always)]
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float(_))
     }
 
+    /// Returns `true` if this number is a signed integer.
+    ///
+    /// This method checks if the number is stored in the `Int(i64)` variant.
+    /// Signed integers are used for negative values or zero. Positive values
+    /// that could fit in `u64` are represented as `Uint` variants instead.
     #[inline(always)]
     pub fn is_int(&self) -> bool {
         matches!(self, Self::Int(_))
