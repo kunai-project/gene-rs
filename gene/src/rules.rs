@@ -17,6 +17,14 @@ mod condition;
 // used to parse path
 pub(crate) mod matcher;
 
+/// Maximum severity value for rules.
+///
+/// This constant defines the upper bound for rule severity values in the engine.
+/// Severity values are used to prioritize and categorize detected events, with
+/// higher values indicating more severe or important detections.
+///
+/// The severity scale ranges from 0 to this maximum value (inclusive). When multiple
+/// rules match an event, their severity values are summed but bounded by this maximum.
 pub const MAX_SEVERITY: u8 = 10;
 
 pub(crate) fn bound_severity(sev: u8) -> u8 {
@@ -229,39 +237,91 @@ pub struct MatchOn {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
-    /// name fo the rule
+    /// Name of the rule.
+    ///
+    /// A unique identifier for the rule used for referencing and debugging.
     pub name: String,
+
+    /// Type of the rule.
+    ///
+    /// Determines the rule's behavior in the engine. When `None`, defaults to
+    /// [`Type::Detection`]. See [`Type`] enum for available variants.
     #[serde(rename = "type")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ty: Option<Type>,
+
+    /// Decision for how this rule affects scan results.
+    ///
+    /// Controls whether matching events are included or excluded. When `None`,
+    /// defaults to [`Decision::Include`]. See [`Decision`] enum for details.
     pub decision: Option<Decision>,
-    /// rule's metadata
+
+    /// Metadata associated with the rule.
+    ///
+    /// Contains additional information such as tags, attack IDs, authors, and
+    /// comments. Used for categorization, attribution, and documentation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Meta>,
-    /// miscellaneous parameters
+
+    /// Miscellaneous parameters for the rule.
+    ///
+    /// Currently supports disabling rules via the `disable` parameter.
+    /// When `None`, all parameters use their default values.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Params>,
-    /// match-on directives
+
+    /// Directives controlling which events this rule applies to.
+    ///
+    /// Specifies event sources and IDs that this rule should match against.
+    /// When `None`, the rule applies to all events.
     #[serde(rename = "match-on")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_on: Option<MatchOn>,
-    /// matches
+
+    /// Field matching expressions for the rule.
+    ///
+    /// Maps operand names to matching expressions that extract and compare
+    /// field values from events. Operand names must start with `$`.
+    /// When `None`, the rule matches all events.
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "deserialize_uk_hashmap")]
     pub matches: Option<HashMap<String, String>>,
-    /// rule triggering condition
+
+    /// Condition determining when this rule triggers.
+    ///
+    /// Specifies how the match operands should be combined using logical
+    /// operators. Common values include `all of them`, `any of them`, or
+    /// custom operand combinations. When `None`, condition is always true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
-    /// severity given to the events matching the rule
+
+    /// Severity level for events matching this rule.
+    ///
+    /// Numerical value from 0 to [`MAX_SEVERITY`] indicating the importance
+    /// or severity of detected events. Higher values indicate more severe events.
+    /// When `None`, defaults to 0. Multiple matching rules' severities are summed
+    /// and bounded by [`MAX_SEVERITY`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub severity: Option<u8>,
-    /// actions to take when rule triggers
+
+    /// Actions to take when this rule triggers.
+    ///
+    /// Set of strings representing actions that should be performed when the
+    /// rule matches an event. Actions are used by external systems to determine
+    /// what responses or notifications should be generated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actions: Option<HashSet<String>>,
 }
 
 impl Rule {
+    /// Deserializes rules from a YAML reader.
+    ///
+    /// Reads and parses YAML rule definitions from the provided reader, returning
+    /// a vector of results. Each result is either a successfully parsed `Rule` or
+    /// a `serde_yaml::Error` indicating what went wrong during deserialization.
+    ///
+    /// This method is useful for loading rules from files or other I/O sources.
     #[inline]
     pub fn deserialize_reader<R: io::Read>(r: R) -> Vec<Result<Self, serde_yaml::Error>> {
         serde_yaml::Deserializer::from_reader(r)
@@ -269,6 +329,11 @@ impl Rule {
             .collect()
     }
 
+    /// Returns `true` if this rule is disabled.
+    ///
+    /// Checks the rule's parameters for a `disable` flag. Returns `false` if the
+    /// parameter is not set or if the rule has no parameters. Disabled rules are
+    /// skipped during engine processing.
     #[inline(always)]
     pub fn is_disabled(&self) -> bool {
         self.params
@@ -277,6 +342,16 @@ impl Rule {
             .unwrap_or_default()
     }
 
+    /// Applies templates to this rule.
+    ///
+    /// Replaces template placeholders in the rule's match expressions with actual
+    /// values from the provided templates. This allows for rule reuse and parameterization.
+    /// Returns the modified rule with templates applied.
+    ///
+    /// # Notes
+    ///
+    /// This method consumes `self` and returns a new rule with templates applied.
+    /// Template replacement is performed in-place on the rule's match expressions.
     #[inline]
     pub fn apply_templates(mut self, templates: &Templates) -> Self {
         templates.replace(&mut self);
@@ -322,6 +397,27 @@ impl Rule {
     }
 
     #[inline]
+    /// Compiles this rule into an executable form.
+    ///
+    /// Transforms the rule definition into a `CompiledRule` that can be executed
+    /// by the engine. This process includes:
+    /// - Validating the rule structure and syntax
+    /// - Parsing match expressions and conditions
+    /// - Setting up attack ID validation and metadata
+    /// - Resolving rule dependencies
+    /// - Applying default values where necessary
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error` if the rule contains invalid syntax, references non-existent
+    /// dependent rules, uses malformed attack IDs, or has other compilation issues.
+    /// The error will include the rule name for context.
+    ///
+    /// # Notes
+    ///
+    /// This method consumes `self` and returns either the compiled rule or an error.
+    /// The compilation process ensures that only valid, executable rules are loaded
+    /// into the engine.
     pub fn compile_into(self) -> Result<CompiledRule, Error> {
         let name = self.name.clone();
         let filters = self.match_on.and_then(|mo| mo.events).unwrap_or_default();
@@ -395,6 +491,27 @@ impl FromStr for Rule {
 }
 
 #[derive(Debug, Default, Clone)]
+/// Compiled form of a rule ready for execution by the engine.
+///
+/// This struct represents a rule that has been parsed, validated, and compiled
+/// into an executable form. It contains all the information needed for the engine
+/// to efficiently evaluate the rule against events, including parsed match expressions,
+/// compiled conditions, and optimized data structures.
+///
+/// `CompiledRule` is created by the [`Rule::compile_into()`] method and is the internal
+/// representation used by the engine during scanning. Unlike the source [`Rule`],
+/// this compiled form is optimized for performance and contains resolved references.
+///
+/// # Performance Characteristics
+///
+/// The compiled form uses optimized data structures:
+/// - `HashSet` for O(1) lookups of tags, attack IDs, and actions
+/// - `HashMap` for efficient field match expression access
+/// - Pre-parsed conditions for faster evaluation
+/// - Event filtering maps for quick event matching checks
+///
+/// This optimization enables the engine to process events efficiently even with
+/// large numbers of loaded rules.
 pub struct CompiledRule {
     pub(crate) name: String,
     pub(crate) ty: Type,
@@ -410,14 +527,42 @@ pub struct CompiledRule {
     pub(crate) actions: HashSet<String>,
 }
 
+/// Error types that can occur during rule processing and compilation.
+///
+/// This enum represents all possible errors that can occur when working with rules,
+/// including parsing, compilation, and evaluation errors. Errors can be wrapped
+/// to provide context about where they occurred in the rule processing pipeline.
 #[derive(Debug, Error, PartialEq)]
 pub enum Error {
+    /// Wrapped error with additional context.
+    ///
+    /// This variant is used to add contextual information about where an error
+    /// occurred, typically including the rule name and the underlying error.
+    /// The first string parameter is the rule name, and the second is a boxed
+    /// error that occurred during processing that rule.
     #[error("rule={0} {1}")]
     Wrap(String, Box<Error>),
+
+    /// Compilation error that occurred during rule processing.
+    ///
+    /// This variant represents errors that occur when compiling.
+    /// The string contains a descriptive error message
+    /// explaining what went wrong during compilation.
     #[error("compile error: {0}")]
     Compile(String),
+
+    /// Error that occurred while parsing match expressions.
+    ///
+    /// This variant is used when there are syntax errors or invalid patterns
+    /// in rule match expressions. It wraps errors from the matcher module.
     #[error("{0}")]
     ParseMatch(#[from] matcher::Error),
+
+    /// Error that occurred while evaluating rule conditions.
+    ///
+    /// This variant represents errors in rule condition evaluation, such as
+    /// invalid operators, type mismatches, or missing fields. It wraps errors
+    /// from the condition evaluation module.
     #[error("{0}")]
     Condition(#[from] Box<condition::Error>),
 }
@@ -427,6 +572,11 @@ impl Error {
         Self::Wrap(name, Box::new(self))
     }
 
+    /// Returns the innermost wrapped error.
+    ///
+    /// This method unwraps nested `Wrap` variants to return the underlying error,
+    /// which is useful for error handling and reporting. If this error is not a
+    /// `Wrap` variant, it returns itself.
     pub fn wrapped(&self) -> &Self {
         match self {
             Self::Wrap(_, e) => e,
