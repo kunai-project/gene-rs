@@ -1,22 +1,99 @@
 <div align="center"><img src="assets/logo.svg" width="250"/></div>
 
-[![Crates.io Version](https://img.shields.io/crates/v/gene?style=for-the-badge)](https://crates.io/crates/gene)
-[![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/0xrawsec/gene-rs/ci.yml?style=for-the-badge&logo=github)](https://github.com/kunai-project/gene-rs/actions)
-![Crates.io MSRV](https://img.shields.io/crates/msrv/gene?style=for-the-badge)
+<!-- cargo-rdme start -->
 
+# Gene - High-Performance Event Scanning and Filtering Engine
+
+[![Crates.io Version](https://img.shields.io/crates/v/gene?style=for-the-badge)](https://crates.io/crates/gene)
 [![Documentation](https://img.shields.io/badge/docs-gene-blue.svg?style=for-the-badge&logo=docsdotrs)](https://docs.rs/gene)
 [![Documentation](https://img.shields.io/badge/docs-gene_derive-purple.svg?style=for-the-badge&logo=docsdotrs)](https://docs.rs/gene_derive)
+![Crates.io MSRV](https://img.shields.io/crates/msrv/gene?style=for-the-badge)
+![Crates.io License](https://img.shields.io/crates/l/gene?style=for-the-badge&color=green)
 
-# Description
+## Project Overview
 
-This project is a Rust implementation of the [Gene project](https://github.com/0xrawsec/gene) initially 
-written in Go. The main objective of this project is to embed a security event scanning engine to
-[Kunai](https://github.com/kunai-project/kunai). Even though it has been built for a specific use case,
-the code in this library is completely re-usable for other log scanning purposes.
+**Gene** is a Rust implementation of the [original Gene project](https://github.com/0xrawsec/gene) designed
+for high-performance event scanning and filtering. Built primarily to power the
+[Kunai](https://github.com/kunai-project/kunai) security monitoring system, Gene provides a flexible
+and efficient rule-based engine for processing structured log events.
 
-This re-implementation was also the occasion to completely rework the rule format, to
-make it simpler, better structured and easier to write. It is now using the [YAML](https://yaml.org/) document 
-format to encode rule information.
+### Purpose
+- Embeddable security event scanning engine
+- High-throughput log processing and filtering
+- Rule-based detection system for security monitoring
+
+### Key Technologies
+- **Rule Format**: YAML-based rule definitions for easy authoring
+- **Pattern Matching**: Advanced field matching with XPath-like syntax
+- **Performance**: Optimized for low-latency, high-volume event processing
+
+### Target Audience
+- Security engineers building detection systems
+- DevOps teams implementing log monitoring
+- Rust developers needing event processing capabilities
+
+## Installation
+
+Add Gene to your project:
+
+```bash
+cargo add gene
+cargo add gene_derive
+```
+
+## Quickstart
+
+```rust
+use gene::{Compiler, Engine, Event, FieldGetter, FieldValue};
+use gene_derive::{Event, FieldGetter};
+
+// 1. Define your event structure
+#[derive(Event, FieldGetter)]
+#[event(id = 1, source = "syslog".into())]
+struct LogEvent {
+    message: String,
+    severity: u8,
+}
+
+// 2. Create compiler and load rules
+let mut compiler = Compiler::new();
+compiler.load_rules_from_str(
+    r#"
+name: high.severity
+matches:
+    $sev: .severity > '5'
+condition: $sev"#
+).unwrap();
+
+// 3. Build the scanning engine
+let mut engine = Engine::try_from(compiler).unwrap();
+
+// 4. Scan events
+let event = LogEvent {
+    message: "Critical error".to_string(),
+    severity: 8,
+};
+
+let scan_result = engine.scan(&event).unwrap();
+if scan_result.includes_detection("high.severity") {
+    println!("High severity event detected!");
+}
+```
+
+## Core Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Events** | Structured data representing log entries or system events |
+| **Rules** | Pattern matching and condition evaluation definitions |
+| **Matches** | Field extraction and pattern matching expressions |
+| **Conditions** | Boolean logic combining match results |
+| **Decisions** | Include/exclude logic for scan results |
+| **Templates** | Dynamic rule configuration through variable substitution |
+
+## Rule Format
+
+Gene uses YAML for rule definitions, providing a clean and structured format:
 
 ```yaml
 name: mimic.kthread
@@ -28,49 +105,75 @@ meta:
         - tries to catch binaries masquerading kernel threads
 match-on:
     events:
-        # we match kunai events execve and execve_script
-        kunai: [1,2]
+        kunai: [1,2]  # Match specific event types
 matches:
-    # 0x200000 is the flag for KTHREAD
     $task_is_kthread: .info.task.flags &= '0x200000'
-    # common kthread names 
     $kthread_names: .info.task.name ~= '^(kworker)'
-# if task is NOT a KTHREAD but we have a name that looks like one
 condition: not $task_is_kthread and $kthread_names
 severity: 10
 ```
 
-# Benchmarks
+### Rule Components
 
-Even though the following benchmarks were made with **real** detection rules and **real security events**
-performances are indicative. I would say that the throughput is not bad, at least to fulfill the main objective of
-this project. The most important aspect being that this library does not become the bottleneck of the
-program in which it is embedded.
+- **`name`**: Unique rule identifier
+- **`meta`**: Metadata including tags, attack IDs, authors
+- **`match-on`**: Event type filtering
+- **`matches`**: Field extraction and pattern matching
+- **`condition`**: Boolean logic for detection
+- **`severity`**: Numerical severity level
 
-To determine whether this library might be a bottleneck for your application, try to evaluate the number
-of events you want to scan per second and see if it is above the processing throughput.
+## Features
 
-## Engine loaded with hundred-ish rules (1 thread)
+### High Performance
+- Optimized for low-latency event processing
+- Efficient pattern matching algorithms
+- Minimal memory overhead
 
+### Flexible Matching
+- XPath-like field access (`.field.subfield`)
+- Regular expression support (`~=` operator)
+- Bitwise operations (`&=`, `|=`, etc.)
+- Comparison operators (`>`, `<`, `==`, etc.)
+
+### Advanced Capabilities
+- **Rule Dependencies**: Chain rules together for complex detection logic
+- **Template System**: Dynamic rule configuration with variable substitution
+- **Metadata Support**: Rich metadata including MITRE ATT&CK mappings
+- **Decision System**: Fine-grained control over event inclusion/exclusion
+
+## Performance Benchmarks
+
+Benchmarks conducted with real detection rules and security events:
+
+### Hundred-ish Rules (127 rules)
+```text
+Number of scanned events: 1,001,600 (1,327.72 MB)
+Scan duration: 1.28s
+Throughput: 1,037.66 MB/s | 782,784.83 events/s
+Detections: 550
 ```
-Number of scanned events: 1001600 -> 1327.72 MB
-Number of loaded rules: 127
-Scan duration: 1.279534249s -> 1037.66 MB/s -> 782784.83 events/s
-Number of detections: 550
+
+### Thousand-ish Rules (1,016 rules)
+```text
+Number of scanned events: 1,001,600 (1,327.72 MB)
+Scan duration: 9.54s
+Throughput: 139.24 MB/s | 105,042.31 events/s
+Detections: 550
 ```
 
-## Engine loaded with thousand-ish rules (1 thread)
+> **Note**: Performance scales with rule complexity. These benchmarks demonstrate
+> that Gene remains efficient even with large rule sets, avoiding bottleneck issues
+> in embedded applications.
 
-```
-Number of scanned events: 1001600 -> 1327.72 MB
-Number of loaded rules: 1016
-Scan duration: 9.535205107s -> 139.24 MB/s -> 105042.31 events/s
-Number of detections: 550
-```
+### Contributing
 
+- Report issues on [GitHub](https://github.com/kunai-project/gene-rs/issues)
+- Submit pull requests with clear descriptions
+- Follow Rust API guidelines and documentation standards
+- Maintain `cargo test` and `cargo clippy` cleanliness
 
+## License
 
+Gene is licensed under the **GPL-3.0** - see the `LICENSE` file for details.
 
-
-
-
+<!-- cargo-rdme end -->
