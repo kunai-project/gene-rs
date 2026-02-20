@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 #![deny(unused_imports)]
 #![allow(clippy::derivable_impls)]
 
