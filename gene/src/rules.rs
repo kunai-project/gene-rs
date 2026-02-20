@@ -1,3 +1,22 @@
+//! Rule definitions and compilation for the Gene event scanning engine.
+//!
+//! This module provides the core types and functionality for defining, compiling,
+//! and executing rules that match and filter events. It includes:
+//!
+//! - Rule definitions with match expressions and conditions
+//! - Decision system for include/exclude logic
+//! - Rule types (detection, filter, dependency)
+//! - Metadata and parameter support
+//! - Compilation pipeline for rule optimization
+//!
+//! # Key Types
+//!
+//! - [`Rule`]: Source rule definition in YAML format
+//! - [`CompiledRule`]: Optimized, executable (by the engine) rule representation
+//! - [`Decision`]: Include/exclude decision enum
+//! - [`Type`]: Rule type enum (detection, filter, dependency)
+//! - [`enum@Error`]: Rule compilation and processing errors
+
 use self::{attack::AttackId, condition::Condition, matcher::Match};
 use crate::{map::deserialize_uk_hashmap, template::Templates, Event};
 
