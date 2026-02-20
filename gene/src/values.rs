@@ -1,3 +1,53 @@
+//! Field value representations and number handling for the Gene event scanning engine.
+//!
+//! This module provides types for representing field values extracted from events
+//! and performing operations on them. It includes:
+//!
+//! - [`Number`]: Unified numeric type supporting integers and floats
+//! - [`NumberError`]: Errors during number parsing and conversion
+//! - [`FieldValue`]: Enum representing any field value type
+//! - Conversion implementations for various Rust types
+//!
+//! # Number Handling
+//!
+//! The [`Number`] enum provides a unified representation for numeric values:
+//! - Signed integers (`Int(i64)`)
+//! - Unsigned integers (`Uint(u64)`)
+//! - Floating-point numbers (`Float(f64)`)
+//!
+//! Variant selection is automatic based on value properties:
+//! - Negative values → `Int(i64)`
+//! - Non-negative values → `Uint(u64)`
+//! - Floating-point values → `Float(f64)`
+//!
+//! # Field Values
+//!
+//! The [`FieldValue`] enum represents any value that can be extracted from an event:
+//! - Strings and paths
+//! - Numbers (via [`Number`])
+//! - Booleans
+//! - Optional values
+//! - Vectors and collections
+//!
+//! # Usage
+//!
+//! ```rust
+//! use gene::values::{Number, FieldValue};
+//!
+//! // Create numbers from various types
+//! let n1: Number = 42u64.into();
+//! let n2: Number = (-5i64).into();
+//! let n3: Number = 3.14f64.into();
+//!
+//! // Parse numbers from strings
+//! let n4 = Number::parse("0x1F").unwrap();
+//!
+//! // Create field values
+//! let fv1: FieldValue = "hello".into();
+//! let fv2: FieldValue = 42u64.into();
+//! let fv3: FieldValue = Some("value").into();
+//! ```
+
 use std::{
     borrow::Cow,
     num::{ParseFloatError, ParseIntError, TryFromIntError},
