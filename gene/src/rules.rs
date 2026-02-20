@@ -3,7 +3,7 @@ use crate::{map::deserialize_uk_hashmap, template::Templates, Event};
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -59,7 +59,8 @@ mod attack {
 }
 
 /// Represents the type of [`Rule`]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Type {
     /// Use it to encode detection information.
     /// Rule will be used to update [crate::ScanResult]
@@ -74,57 +75,110 @@ pub enum Type {
     Dependency,
 }
 
-impl Type {
-    #[inline(always)]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Detection => "detection",
-            Self::Filter => "filter",
-            Self::Dependency => "dependency",
-        }
-    }
-}
-
 impl Default for Type {
     fn default() -> Self {
         Self::Detection
     }
 }
 
-#[derive(Debug, Error, Clone)]
-pub enum ParseTypeError {
-    #[error("unknown type: {0}")]
-    UnkwnownType(String),
+/// Decision determining whether a rule should include or exclude matching events.
+///
+/// The `Decision` enum controls how rules affect scan results when they match:
+///
+/// - `Include`: Matching events are added to the scan result (default behavior)
+/// - `Exclude`: Matching events are excluded from the scan result
+///
+/// # Serialization
+///
+/// This enum serializes to lowercase strings: `"include"` and `"exclude"`.
+///
+/// # Examples
+///
+/// ```yaml
+/// # Explicit include (same as default)
+/// name: example.include
+/// decision: include
+/// matches:
+///     $a: .field == "value"
+/// condition: $a
+///
+/// # Explicit exclude
+/// name: example.exclude
+/// decision: exclude
+/// matches:
+///     $a: .field == "bad_value"
+/// condition: $a
+/// ```
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Decision {
+    /// Include matching events in the scan result.
+    ///
+    /// When a rule with this decision matches, the event is added to the scan
+    /// result.
+    Include,
+
+    /// Exclude matching events from the scan result.
+    ///
+    /// When a rule with this decision matches, the event is excluded from the
+    /// scan result.
+    Exclude,
 }
 
-impl FromStr for Type {
-    type Err = ParseTypeError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "detection" => Ok(Self::Detection),
-            "filter" => Ok(Self::Filter),
-            "dependency" => Ok(Self::Dependency),
-            _ => Err(ParseTypeError::UnkwnownType(s.into())),
-        }
+impl Default for Decision {
+    /// Returns the default decision type.
+    ///
+    /// The default is `Decision::Include`, meaning rules without an explicit
+    /// decision field will include matching events in scan results.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::rules::Decision;
+    ///
+    /// let decision = Decision::default();
+    /// assert!(matches!(decision, Decision::Include));
+    /// ```
+    fn default() -> Self {
+        Self::Include
     }
 }
 
-impl Serialize for Type {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
+impl Decision {
+    /// Returns `true` if this is an include decision.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::rules::Decision;
+    ///
+    /// let decision = Decision::Include;
+    /// assert!(decision.is_include());
+    ///
+    /// let decision = Decision::Exclude;
+    /// assert!(!decision.is_include());
+    /// ```
+    #[inline(always)]
+    pub fn is_include(&self) -> bool {
+        matches!(self, Self::Include)
     }
-}
 
-impl<'de> Deserialize<'de> for Type {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::from_str(&s).map_err(de::Error::custom)
+    /// Returns `true` if this is an exclude decision.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::rules::Decision;
+    ///
+    /// let decision = Decision::Exclude;
+    /// assert!(decision.is_exclude());
+    ///
+    /// let decision = Decision::Include;
+    /// assert!(!decision.is_exclude());
+    /// ```
+    #[inline(always)]
+    pub fn is_exclude(&self) -> bool {
+        matches!(self, Self::Exclude)
     }
 }
 
@@ -180,6 +234,7 @@ pub struct Rule {
     #[serde(rename = "type")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ty: Option<Type>,
+    pub decision: Option<Decision>,
     /// rule's metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Meta>,
@@ -276,6 +331,7 @@ impl Rule {
             let mut c = CompiledRule {
                 name: self.name,
                 ty: self.ty.unwrap_or_default(),
+                decision: self.decision.unwrap_or_default(),
                 depends: HashSet::new(),
                 tags: HashSet::new(),
                 attack: HashSet::new(),
@@ -342,6 +398,7 @@ impl FromStr for Rule {
 pub struct CompiledRule {
     pub(crate) name: String,
     pub(crate) ty: Type,
+    pub(crate) decision: Decision,
     pub(crate) depends: HashSet<String>,
     pub(crate) tags: HashSet<String>,
     pub(crate) attack: HashSet<String>,
@@ -456,19 +513,29 @@ impl CompiledRule {
         self.severity
     }
 
-    /// Returns true if the rule is [Type::Filter]
+    /// Returns true if the rule is [`Type::Filter`]
     #[inline(always)]
     pub fn is_filter(&self) -> bool {
         matches!(self.ty, Type::Filter)
     }
 
-    /// Returns true if the rule is [Type::Detection]
+    /// Returns true if the rule is [`Type::Detection`]
     #[inline(always)]
     pub fn is_detection(&self) -> bool {
         matches!(self.ty, Type::Detection)
     }
 
-    /// Returns rule's [Type]
+    /// Returns `true` if this rule has an include decision.
+    pub fn is_include(&self) -> bool {
+        self.decision.is_include()
+    }
+
+    /// Returns `true` if this rule has an exclude decision.
+    pub fn is_exclude(&self) -> bool {
+        self.decision.is_exclude()
+    }
+
+    /// Returns rule's [`Type`]
     #[inline(always)]
     pub fn ty(&self) -> Type {
         self.ty

@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
     compiler,
-    rules::{self, bound_severity, CompiledRule},
+    rules::{self, bound_severity, CompiledRule, Decision},
     Compiler, Event, FieldValue,
 };
 
@@ -53,32 +53,162 @@ pub struct Filter<'s> {
     pub actions: HashSet<Cow<'s, str>>,
 }
 
-/// Structure representing the result of an [`Event`] scanned by the
-/// [`Engine`].
-#[derive(Debug, Default, FieldGetter, Serialize, Deserialize, Clone, PartialEq)]
+/// Enum representing the decision state for filters and detections.
+#[derive(Debug)]
+pub enum ScanDecision<'s, T>
+where
+    T: Default,
+{
+    /// Exclude decision variant.
+    ///
+    /// When a component is excluded, it may optionally include the name of the excluding
+    /// rule.
+    Exclude(Option<Cow<'s, str>>),
+
+    /// Include decision variant.
+    ///
+    /// When a component is included, this variant contains data containing inclusion
+    /// information.
+    Include(T),
+}
+
+impl<'s, T> ScanDecision<'s, T>
+where
+    T: Default,
+{
+    #[inline]
+    fn default_exclude() -> Self {
+        Self::Exclude(None)
+    }
+
+    #[inline(always)]
+    fn exclude(&mut self, s: &'s str) {
+        *self = Self::Exclude(Some(Cow::Borrowed(s)))
+    }
+
+    #[inline]
+    fn get_include_or_insert_default(&mut self) -> Option<&mut T> {
+        match self {
+            Self::Include(i) => Some(i),
+            Self::Exclude(None) => {
+                *self = Self::Include(T::default());
+                let Self::Include(i) = self else {
+                    unreachable!("Exclude variant should never be in this state")
+                };
+                Some(i)
+            }
+            Self::Exclude(Some(_)) => None,
+        }
+    }
+
+    /// Consumes the decision and returns the included data if this is an `Include` variant.
+    ///
+    /// Returns `None` if this is an `Exclude` variant. This method consumes `self`,
+    /// transferring ownership of the included data to the caller.
+    #[inline(always)]
+    pub fn take_include(self) -> Option<T> {
+        match self {
+            Self::Include(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the included data if this is an `Include` variant.
+    ///
+    /// Returns `None` if this is an `Exclude` variant. This is a non-consuming
+    /// method that provides borrowed access to the included data.
+    #[inline(always)]
+    pub fn get_include(&self) -> Option<&T> {
+        match self {
+            Self::Include(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the exclude reason if this is an `Exclude` variant.
+    ///
+    /// Returns `None` if this is an `Include` variant. The returned value is
+    /// an `Option<&Option<Cow<'_, str>>>` representing the optional exclusion rule.
+    #[inline(always)]
+    pub fn get_exclude(&self) -> Option<&Option<Cow<'_, str>>> {
+        match self {
+            Self::Exclude(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if this is an `Include` variant.
+    #[inline(always)]
+    pub fn is_include(&self) -> bool {
+        matches!(self, Self::Include(_))
+    }
+
+    /// Returns `true` if this is an `Exclude` variant.
+    #[inline(always)]
+    pub fn is_exclude(&self) -> bool {
+        matches!(self, Self::Exclude(_))
+    }
+
+    /// Returns `true` if this is an `Exclude` variant with no specific rule.
+    ///
+    /// This indicates a default exclusion where `Exclude(None)` was used,
+    /// distinguishing it from exclusions from a specific exclusion rule.
+    #[inline(always)]
+    pub fn is_default_exclude(&self) -> bool {
+        matches!(self, Self::Exclude(None))
+    }
+}
+
+/// Structure representing the result of an [`Event`] scanned by the [`Engine`].
+///
+/// The `ScanResult` contains the outcome of scanning an event against all loaded rules,
+/// including both detection and filter rule matches. It uses [`ScanDecision`] to track
+/// whether the decision state implemented by the rules.
+///
+/// # Type Parameters
+///
+/// - `'s`: Lifetime parameter for borrowed data from the original event and rules
+///
+/// # Fields
+///
+/// - `filter`: Filter rule scan decision and data
+/// - `detection`: Detection rule scan decision and data
+///
+/// # Usage
+///
+/// This struct is returned by [`Engine::scan()`] and provides access to all matching
+/// rules, their metadata (tags, actions, attack IDs), and severity information.
+#[derive(Debug)]
 pub struct ScanResult<'s> {
-    /// If any, contains [`Detection`] information resulting from the scan
-    #[getter(skip)]
-    pub detection: Option<Detection<'s>>,
-    /// If any, contains [`Filter`] information resulting from the scan
-    #[getter(skip)]
-    pub filter: Option<Filter<'s>>,
+    /// Filter rule scan decision and data.
+    ///
+    /// Contains the decision (include/exclude) and associated filter data for
+    /// any filter rules that matched the scanned event.
+    pub filter: ScanDecision<'s, Filter<'s>>,
+
+    /// Detection rule scan decision and data.
+    ///
+    /// Contains the decision (include/exclude) and associated detection data for
+    /// any detection rules that matched the scanned event.
+    pub detection: ScanDecision<'s, Detection<'s>>,
 }
 
 impl<'s> ScanResult<'s> {
-    /// Creates an new [`ScanResult`]
-    pub fn new() -> Self {
-        ScanResult {
-            ..Default::default()
+    fn default_exclude() -> Self {
+        Self {
+            filter: ScanDecision::<'s, Filter<'s>>::default_exclude(),
+            detection: ScanDecision::<'s, Detection<'s>>::default_exclude(),
         }
     }
 
     #[inline(always)]
-    fn update(&mut self, r: &'s CompiledRule) {
+    fn update_include(&mut self, r: &'s CompiledRule) {
         // we update matches only if it is not a filter rule
         if r.is_detection() {
             // update matches
-            let detections = self.detection.get_or_insert_default();
+            let Some(detections) = self.detection.get_include_or_insert_default() else {
+                return;
+            };
 
             detections.rules.insert(Cow::from(&r.name));
 
@@ -106,7 +236,9 @@ impl<'s> ScanResult<'s> {
             // we bound the severity of an event
             detections.severity = bound_severity(detections.severity + r.severity);
         } else if r.is_filter() {
-            let filters = self.filter.get_or_insert_default();
+            let Some(filters) = self.filter.get_include_or_insert_default() else {
+                return;
+            };
 
             filters.rules.insert(Cow::from(&r.name));
 
@@ -126,83 +258,223 @@ impl<'s> ScanResult<'s> {
         }
     }
 
-    /// Returns true if the scan result has matched filter rule with `name`
+    #[inline]
+    fn update_exclude(&mut self, r: &'s CompiledRule) {
+        if r.is_detection() {
+            self.detection.exclude(&r.name);
+        } else if r.is_filter() {
+            self.filter.exclude(&r.name);
+        }
+    }
+
+    /// Returns the decision for filter rules in this scan result.
+    ///
+    /// Returns `Decision::Include` if filter rules are included, or `Decision::Exclude`
+    /// if they are excluded from the result.
+    #[inline]
+    pub fn filter_decision(&self) -> Decision {
+        if self.filter.is_include() {
+            Decision::Include
+        } else {
+            Decision::Exclude
+        }
+    }
+
+    /// Returns the decision for detection rules in this scan result.
+    ///
+    /// Returns `Decision::Include` if detection rules are included, or `Decision::Exclude`
+    /// if they are excluded from the result.
+    #[inline]
+    pub fn detection_decision(&self) -> Decision {
+        if self.detection.is_include() {
+            Decision::Include
+        } else {
+            Decision::Exclude
+        }
+    }
+
+    /// Returns `true` if this scan result represents the default exclude decision.
+    ///
+    /// A scan result is considered a default exclude when both detection and filter
+    /// decisions are set to exclude their default values.
+    #[inline]
+    pub fn is_default_exclude(&self) -> bool {
+        self.detection.is_default_exclude() && self.filter.is_default_exclude()
+    }
+
+    /// Returns `true` if this scan result contains only included filter rules.
+    ///
+    /// This is `true` when detection rules are excluded and filter rules are included,
+    /// indicating that only filter rules matched during scanning.
     #[inline(always)]
-    pub fn contains_filter<S: AsRef<str>>(&self, name: S) -> bool {
+    pub fn is_only_filter_include(&self) -> bool {
+        self.detection_decision().is_exclude() && self.filter_decision().is_include()
+    }
+
+    /// Returns `true` if the scan result includes a filter rule with the given name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::{Compiler, Engine};
+    ///
+    /// let mut compiler = Compiler::new();
+    /// compiler.load_rules_from_str(r#"
+    /// name: test.filter
+    /// type: filter
+    /// matches:
+    ///     $a: .field == "value"
+    /// condition: $a
+    /// "#).unwrap();
+    ///
+    /// let mut engine = Engine::try_from(compiler).unwrap();
+    /// // ... scan an event ...
+    /// // let scan_result = engine.scan(&event).unwrap();
+    /// // assert!(scan_result.includes_filter("test.filter"));
+    /// ```
+    #[inline(always)]
+    pub fn includes_filter<S: AsRef<str>>(&self, name: S) -> bool {
         self.filter
-            .as_ref()
+            .get_include()
             .map(|f| f.rules.contains(name.as_ref()))
             .unwrap_or_default()
     }
 
-    /// Returns true if the scan results matched detection rule with `name`
+    /// Returns `true` if the scan result includes a detection rule with the given name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::{Compiler, Engine};
+    ///
+    /// let mut compiler = Compiler::new();
+    /// compiler.load_rules_from_str(r#"
+    /// name: test.detection
+    /// matches:
+    ///     $a: .field == "value"
+    /// condition: $a
+    /// "#).unwrap();
+    ///
+    /// let mut engine = Engine::try_from(compiler).unwrap();
+    /// // ... scan an event ...
+    /// // let scan_result = engine.scan(&event).unwrap();
+    /// // assert!(scan_result.includes_detection("test.detection"));
+    /// ```
     #[inline(always)]
-    pub fn contains_detection<S: AsRef<str>>(&self, name: S) -> bool {
+    pub fn includes_detection<S: AsRef<str>>(&self, name: S) -> bool {
         self.detection
-            .as_ref()
+            .get_include()
             .map(|d| d.rules.contains(name.as_ref()))
             .unwrap_or_default()
     }
 
-    /// Returns true if the scan results contains a given tag
+    /// Returns `true` if the scan result includes the specified tag.
+    ///
+    /// Checks both detection and filter rules for the given tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::{Compiler, Engine};
+    ///
+    /// let mut compiler = Compiler::new();
+    /// compiler.load_rules_from_str(r#"
+    /// name: test.rule
+    /// meta:
+    ///     tags: ["network", "suspicious"]
+    /// matches:
+    ///     $a: .field == "value"
+    /// condition: $a
+    /// "#).unwrap();
+    ///
+    /// let mut engine = Engine::try_from(compiler).unwrap();
+    /// // ... scan an event ...
+    /// // let scan_result = engine.scan(&event).unwrap();
+    /// // assert!(scan_result.includes_tag("network"));
+    /// ```
     #[inline(always)]
-    pub fn contains_tag<S: AsRef<str>>(&self, tag: S) -> bool {
+    pub fn includes_tag<S: AsRef<str>>(&self, tag: S) -> bool {
         self.detection
-            .as_ref()
+            .get_include()
             .map(|d| d.tags.contains(tag.as_ref()))
-            .or_else(|| self.filter.as_ref().map(|f| f.tags.contains(tag.as_ref())))
+            .or_else(|| {
+                self.filter
+                    .get_include()
+                    .map(|f| f.tags.contains(tag.as_ref()))
+            })
             .unwrap_or_default()
     }
 
-    /// Returns true if the scan results contains a given action
+    /// Returns `true` if the scan result includes the specified action.
+    ///
+    /// Checks both detection and filter rules for the given action.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::{Compiler, Engine};
+    ///
+    /// let mut compiler = Compiler::new();
+    /// compiler.load_rules_from_str(r#"
+    /// name: test.rule
+    /// actions: ["alert", "log"]
+    /// matches:
+    ///     $a: .field == "value"
+    /// condition: $a
+    /// "#).unwrap();
+    ///
+    /// let mut engine = Engine::try_from(compiler).unwrap();
+    /// // ... scan an event ...
+    /// // let scan_result = engine.scan(&event).unwrap();
+    /// // assert!(scan_result.includes_action("alert"));
+    /// ```
     #[inline(always)]
-    pub fn contains_action<S: AsRef<str>>(&self, action: S) -> bool {
+    pub fn includes_action<S: AsRef<str>>(&self, action: S) -> bool {
         self.detection
-            .as_ref()
+            .get_include()
             .map(|d| d.actions.contains(action.as_ref()))
             .or_else(|| {
                 self.filter
-                    .as_ref()
+                    .get_include()
                     .map(|f| f.actions.contains(action.as_ref()))
             })
             .unwrap_or_default()
     }
 
-    /// Returns true if the scan results contains a given attack id. No validity
-    /// check is made on the id parameter, so if it is not looking like a MITRE
-    /// ATT&CK id, this function will return false.
+    /// Returns `true` if the scan result includes the specified MITRE ATT&CK ID.
+    ///
+    /// The comparison is case-insensitive. No validation is performed on the input
+    /// ID - if it does not conform to MITRE ATT&CK ID format, this will return `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::{Compiler, Engine};
+    ///
+    /// let mut compiler = Compiler::new();
+    /// compiler.load_rules_from_str(r#"
+    /// name: test.rule
+    /// meta:
+    ///     attack: ["T1059"]
+    /// matches:
+    ///     $a: .field == "value"
+    /// condition: $a
+    /// "#).unwrap();
+    ///
+    /// let mut engine = Engine::try_from(compiler).unwrap();
+    /// // ... scan an event ...
+    /// // let scan_result = engine.scan(&event).unwrap();
+    /// // assert!(scan_result.includes_attack_id("t1059"));
+    /// // assert!(scan_result.includes_attack_id("T1059"));
+    /// ```
     #[inline(always)]
-    pub fn contains_attack_id<S: AsRef<str>>(&self, id: S) -> bool {
+    pub fn includes_attack_id<S: AsRef<str>>(&self, id: S) -> bool {
         let attack_id = id.as_ref().to_ascii_uppercase();
 
         self.detection
-            .as_ref()
+            .get_include()
             .map(|d| d.attack.contains(&Cow::from(&attack_id)))
             .unwrap_or_default()
-    }
-
-    /// Returns true if the scan results is considered as a detection (i.e. it matched some detection rules)
-    #[inline(always)]
-    pub fn has_detection(&self) -> bool {
-        self.detection.is_some()
-    }
-
-    /// Returns true if the `ScanResult` is empty
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.detection.is_none() && self.filter.is_none()
-    }
-
-    /// Returns true if the `ScanResult` **only matched** filter rule(s)
-    #[inline(always)]
-    pub fn has_only_filter(&self) -> bool {
-        self.detection.is_none() && self.filter.is_some()
-    }
-
-    /// Returns true if the `ScanResult` **also matched** a filter rule
-    #[inline(always)]
-    pub fn has_filter(&self) -> bool {
-        self.filter.is_some()
     }
 }
 
@@ -210,6 +482,12 @@ impl<'s> ScanResult<'s> {
 pub enum Error {
     #[error("{0}")]
     Rule(#[from] rules::Error),
+}
+
+#[derive(Debug, Default, Clone)]
+struct RuleCacheEntry {
+    filters: Vec<usize>,
+    detections: Vec<usize>,
 }
 
 /// Structure to represent an [`Event`] scanning engine.
@@ -273,12 +551,12 @@ pub enum Error {
 /// condition: $n and $pi and $a and $b
 /// ..."#).unwrap();
 /// let mut e = Engine::try_from(c).unwrap();
-/// let scan_res = e.scan(&event).unwrap().unwrap();
+/// let scan_res = e.scan(&event).unwrap();
 /// println!("{:#?}", scan_res);
 ///
-/// assert!(scan_res.contains_detection("toast.it"));
-/// assert!(scan_res.contains_tag("my:super:tag"));
-/// assert!(scan_res.contains_attack_id("T1234"));
+/// assert!(scan_res.includes_detection("toast.it"));
+/// assert!(scan_res.includes_tag("my:super:tag"));
+/// assert!(scan_res.includes_attack_id("T1234"));
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Engine {
@@ -289,7 +567,7 @@ pub struct Engine {
     // cache the list of rules indexes to match a given (source, id)
     // key: (source, event_id)
     // value: vector of rule indexes
-    rules_cache: HashMap<(String, i64), Vec<usize>>,
+    rules_cache: HashMap<(String, i64), RuleCacheEntry>,
     // cache rules dependencies
     // key: rule index
     // value: vector of dependency indexes
@@ -338,9 +616,10 @@ impl Engine {
     }
 
     #[inline(always)]
-    fn cached_rules(&mut self, src: String, id: i64) -> &[usize] {
+    fn cache_rules(&mut self, src: String, id: i64) {
         let key = (src, id);
-        let mut tmp = BTreeMap::new();
+        let mut tmp_filters = BTreeMap::new();
+        let mut tmp_detections = BTreeMap::new();
 
         if !self.rules_cache.contains_key(&key) {
             for (i, r) in self
@@ -354,13 +633,27 @@ impl Engine {
                 // we take only rules that can match on that kind of event
                 .filter(|(_, r)| r.can_match_on(&key.0, id))
             {
-                tmp.insert((r.severity, Cow::from(&r.name)), i);
+                if r.is_filter() {
+                    tmp_filters.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
+                } else if r.is_detection() {
+                    tmp_detections.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
+                }
             }
-        }
 
-        self.rules_cache
-            .entry(key)
-            .or_insert_with(|| tmp.values().rev().cloned().collect())
+            self.rules_cache.insert(
+                key,
+                RuleCacheEntry {
+                    filters: tmp_filters.values().rev().cloned().collect(),
+                    detections: tmp_detections.values().rev().cloned().collect(),
+                },
+            );
+        }
+    }
+
+    #[inline(always)]
+    fn cached_rules(&self, src: String, id: i64) -> Option<&RuleCacheEntry> {
+        let key = (src, id);
+        self.rules_cache.get(&key)
     }
 
     /// Returns the `Vec` of [CompiledRule] currently loaded in the engine
@@ -381,7 +674,7 @@ impl Engine {
     }
 
     /// Dfs recursive dependency finding
-    /// There is no check for circular references as those are impossibele
+    /// There is no check for circular references as those are impossible
     /// due to the fact that a rule cannot depend on a non existing rule.
     #[inline(always)]
     fn dfs_dep_search(&self, rule_idx: usize) -> Vec<usize> {
@@ -410,80 +703,87 @@ impl Engine {
     }
 
     /// Scan an [`Event`] with all the rules loaded in the [`Engine`]
-    pub fn scan<E>(
-        &mut self,
-        event: &E,
-    ) -> Result<Option<ScanResult<'_>>, Box<(Option<ScanResult<'_>>, Error)>>
+    pub fn scan<E>(&mut self, event: &E) -> Result<ScanResult<'_>, Box<(ScanResult<'_>, Error)>>
     where
         E: for<'e> Event<'e>,
     {
-        let mut sr: Option<ScanResult<'_>> = None;
+        let mut sr = ScanResult::default_exclude();
         let mut last_err: Option<Error> = None;
 
         let src = event.source();
         let id = event.id();
 
-        let i_rules = self.cached_rules(src.into(), id).to_vec();
-        let mut states = HashMap::with_capacity(i_rules.len());
+        self.cache_rules(src.clone().into(), id);
+        let cached_rules = self.cached_rules(src.into(), id).unwrap();
+        let mut states = HashMap::new();
 
-        for i in i_rules {
-            // this is equivalent to an OOB error but this should not happen
-            let r = self.rules.get(i).unwrap();
+        // we iterate over each because we don't want exclude rules from filter
+        // exclude to impact detection include and vice versa
+        for it in [cached_rules.filters.iter(), cached_rules.detections.iter()] {
+            for i in it {
+                // this is equivalent to an OOB error but this should not happen
+                let r = self.rules.get(*i).unwrap();
 
-            if !r.depends.is_empty() {
-                debug_assert!(self.deps_cache.contains_key(&i));
-                // there are some dependent rules to match against
-                if let Some(deps) = self.deps_cache.get(&i) {
-                    // we match every dependency of the rule first
-                    for &r_i in deps.iter() {
-                        if let Some(r) = self.rules.get(r_i) {
-                            // we don't need to compute rule again
-                            // NB: rule might be used in several places and already computed
-                            if states.contains_key(&Cow::Borrowed(r.name.as_str())) {
-                                continue;
-                            }
-
-                            // if the rule cannot match we don't need to go further
-                            if !r.can_match_on(event.source(), id) {
-                                states.insert(Cow::Borrowed(r.name.as_str()), false);
-                                continue;
-                            }
-
-                            match r
-                                .match_event_with_states(event, &states)
-                                .map_err(Error::from)
-                            {
-                                Ok(ok) => {
-                                    states.insert(Cow::Borrowed(r.name.as_str()), ok);
+                if !r.depends.is_empty() {
+                    debug_assert!(self.deps_cache.contains_key(i));
+                    // there are some dependent rules to match against
+                    if let Some(deps) = self.deps_cache.get(i) {
+                        // we match every dependency of the rule first
+                        for &r_i in deps.iter() {
+                            if let Some(r) = self.rules.get(r_i) {
+                                // we don't need to compute rule again
+                                // NB: rule might be used in several places and already computed
+                                if states.contains_key(&Cow::Borrowed(r.name.as_str())) {
+                                    continue;
                                 }
-                                Err(e) => last_err = Some(e),
+
+                                // if the rule cannot match we don't need to go further
+                                if !r.can_match_on(event.source(), id) {
+                                    states.insert(Cow::Borrowed(r.name.as_str()), false);
+                                    continue;
+                                }
+
+                                match r
+                                    .match_event_with_states(event, &states)
+                                    .map_err(Error::from)
+                                {
+                                    Ok(ok) => {
+                                        states.insert(Cow::Borrowed(r.name.as_str()), ok);
+                                    }
+                                    Err(e) => last_err = Some(e),
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // if the rule has already been matched in the process
-            // of dependency matching of whatever rule
-            let ok = match states.get(&Cow::Borrowed(r.name.as_str())) {
-                Some(&ok) => ok,
-                None => {
-                    match r
-                        .match_event_with_states(event, &states)
-                        .map_err(Error::from)
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            last_err = Some(e);
-                            false
+                // if the rule has already been matched in the process
+                // of dependency matching of whatever rule
+                let ok = match states.get(&Cow::Borrowed(r.name.as_str())) {
+                    Some(&ok) => ok,
+                    None => {
+                        match r
+                            .match_event_with_states(event, &states)
+                            .map_err(Error::from)
+                        {
+                            Ok(ok) => ok,
+                            Err(e) => {
+                                last_err = Some(e);
+                                false
+                            }
                         }
                     }
-                }
-            };
+                };
 
-            // we process scan result
-            if ok {
-                sr.get_or_insert(ScanResult::new()).update(r);
+                // we process scan result
+                if ok {
+                    if r.decision.is_include() {
+                        sr.update_include(r);
+                    } else {
+                        sr.update_exclude(r);
+                        break;
+                    }
+                }
             }
         }
 
@@ -547,12 +847,12 @@ actions: ["do_something"]
 
         let mut e = Engine::try_from(c).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.contains_detection("test"));
-        assert!(sr.contains_action("do_something"));
-        assert!(!sr.has_filter());
-        assert!(!sr.is_empty());
-        assert!(!sr.has_only_filter());
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.includes_detection("test"));
+        assert!(sr.includes_action("do_something"));
+        assert!(!sr.filter_decision().is_include());
+        assert!(!sr.is_default_exclude());
+        assert!(!sr.is_only_filter_include());
     }
 
     #[test]
@@ -576,9 +876,9 @@ condition: $a
             source = "test",
             (".ip", vec!["9.9.9.9", "8.8.4.4"])
         );
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.has_detection());
-        assert!(sr.contains_detection("test"));
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.detection_decision().is_include());
+        assert!(sr.includes_detection("test"));
     }
 
     #[test]
@@ -597,14 +897,14 @@ actions: ["do_something"]"#,
 
         let mut e = Engine::try_from(c).unwrap();
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
+        let sr = e.scan(&Dummy {}).unwrap();
         // filter matches should not be put in matches
-        assert!(!sr.contains_detection("test"));
+        assert!(!sr.includes_detection("test"));
         // actions should be propagated even if it is a filter
-        assert!(sr.contains_action("do_something"));
-        assert!(!sr.is_empty());
-        assert!(sr.has_filter());
-        assert!(sr.has_only_filter());
+        assert!(sr.includes_action("do_something"));
+        assert!(!sr.is_default_exclude());
+        assert!(sr.filter_decision().is_include());
+        assert!(sr.is_only_filter_include());
     }
 
     #[test]
@@ -625,10 +925,10 @@ match-on:
 
         let mut e = Engine::try_from(c).unwrap();
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
-        e.scan(&IpEvt {}).unwrap().unwrap();
+        e.scan(&IpEvt {}).unwrap();
 
         fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
-        e.scan(&PathEvt {}).unwrap().unwrap();
+        e.scan(&PathEvt {}).unwrap();
     }
 
     #[test]
@@ -650,10 +950,10 @@ match-on:
 
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
         // not explicitly included so it should not be
-        assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
+        assert!(e.scan(&IpEvt {}).unwrap().is_default_exclude());
 
         fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
-        e.scan(&PathEvt {}).unwrap().unwrap();
+        assert!(e.scan(&PathEvt {}).unwrap().is_only_filter_include());
     }
 
     #[test]
@@ -673,14 +973,14 @@ match-on:
 
         let mut e = Engine::try_from(c).unwrap();
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
-        assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
+        assert!(e.scan(&IpEvt {}).unwrap().is_default_exclude());
 
         // if not explicitely excluded it is included
         fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
-        assert!(e.scan(&PathEvt {}).unwrap().is_some());
+        assert!(e.scan(&PathEvt {}).unwrap().filter_decision().is_include());
 
         fake_event!(DnsEvt, id = 3, source = "test", (".domain", "test.com"));
-        assert!(e.scan(&DnsEvt {}).unwrap().is_some());
+        assert!(e.scan(&DnsEvt {}).unwrap().filter_decision().is_include());
     }
 
     #[test]
@@ -702,15 +1002,15 @@ match-on:
         let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(IpEvt, id = 1, source = "test", (".ip", "8.8.4.4"));
-        assert_eq!(e.scan(&IpEvt {}).unwrap(), None);
+        assert!(e.scan(&IpEvt {}).unwrap().is_default_exclude());
 
         fake_event!(PathEvt, id = 2, source = "test", (".path", "/bin/ls"));
-        assert!(e.scan(&PathEvt {}).unwrap().is_some());
+        assert!(e.scan(&PathEvt {}).unwrap().filter_decision().is_include());
 
         // this has not been excluded but not included so it should
         // not match
         fake_event!(DnsEvt, id = 3, source = "test", (".domain", "test.com"));
-        assert_eq!(e.scan(&DnsEvt {}).unwrap(), None);
+        assert!(e.scan(&DnsEvt {}).unwrap().is_default_exclude());
     }
 
     #[test]
@@ -739,11 +1039,11 @@ match-on:
         let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.contains_detection("match"));
-        assert!(sr.contains_action("do_something"));
-        assert!(sr.has_filter());
-        assert!(!sr.has_only_filter());
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.includes_detection("match"));
+        assert!(sr.includes_action("do_something"));
+        assert!(sr.filter_decision().is_include());
+        assert!(!sr.is_only_filter_include());
     }
 
     #[test]
@@ -775,11 +1075,11 @@ match-on:
         let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.contains_detection("test.1"));
-        assert!(sr.contains_detection("test.2"));
-        assert!(sr.contains_tag("some:random:tag"));
-        assert!(sr.contains_tag("another:tag"));
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.includes_detection("test.1"));
+        assert!(sr.includes_detection("test.2"));
+        assert!(sr.includes_tag("some:random:tag"));
+        assert!(sr.includes_tag("another:tag"));
     }
 
     #[test]
@@ -812,11 +1112,11 @@ match-on:
         let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.contains_detection("detect.t4242"));
-        assert!(sr.contains_detection("detect.t4343"));
-        assert!(sr.contains_attack_id("t4242"));
-        assert!(sr.contains_attack_id("t4343"));
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.includes_detection("detect.t4242"));
+        assert!(sr.includes_detection("detect.t4343"));
+        assert!(sr.includes_attack_id("t4242"));
+        assert!(sr.includes_attack_id("t4343"));
     }
 
     #[test]
@@ -848,16 +1148,16 @@ name: match.all
         let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.contains_detection("main"));
-        assert!(!sr.contains_detection("dep.rule"));
-        assert!(sr.contains_detection("match.all"));
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.includes_detection("main"));
+        assert!(!sr.includes_detection("dep.rule"));
+        assert!(sr.includes_detection("match.all"));
 
         fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
-        let sr = e.scan(&Dummy2 {}).unwrap().unwrap();
-        assert!(!sr.contains_detection("depends"));
-        assert!(!sr.contains_detection("dep.rule"));
-        assert!(sr.contains_detection("match.all"));
+        let sr = e.scan(&Dummy2 {}).unwrap();
+        assert!(!sr.includes_detection("depends"));
+        assert!(!sr.includes_detection("dep.rule"));
+        assert!(sr.includes_detection("match.all"));
     }
 
     #[test]
@@ -971,15 +1271,281 @@ name: match.all
         let mut e = Engine::try_from(c).unwrap();
 
         fake_event!(Dummy, id = 1, source = "test", (".ipv6", "::1"));
-        let sr = e.scan(&Dummy {}).unwrap().unwrap();
-        assert!(sr.contains_detection("main"));
-        assert!(!sr.contains_detection("dep.rule"));
-        assert!(sr.contains_detection("match.all"));
+        let sr = e.scan(&Dummy {}).unwrap();
+        assert!(sr.includes_detection("main"));
+        assert!(!sr.includes_detection("dep.rule"));
+        assert!(sr.includes_detection("match.all"));
 
         fake_event!(Dummy2, id = 2, source = "test", (".ip", "8.8.8.8"));
-        let sr = e.scan(&Dummy2 {}).unwrap().unwrap();
-        assert!(!sr.contains_detection("depends"));
-        assert!(!sr.contains_detection("dep.rule"));
-        assert!(sr.contains_detection("match.all"));
+        let sr = e.scan(&Dummy2 {}).unwrap();
+        assert!(!sr.includes_detection("depends"));
+        assert!(!sr.includes_detection("dep.rule"));
+        assert!(sr.includes_detection("match.all"));
+    }
+
+    #[test]
+    fn test_decision_include_behavior() {
+        // Test basic include decision behavior
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+    name: include.rule
+    matches:
+        $a: .ip == "8.8.4.4"
+    condition: $a
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+        fake_event!(TestEvent, id = 1, source = "test", (".ip", "8.8.4.4"));
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        assert!(sr.includes_detection("include.rule"));
+        assert!(sr.detection_decision().is_include());
+    }
+
+    #[test]
+    fn test_decision_exclude_behavior() {
+        // Test basic exclude decision behavior
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+    name: exclude.rule
+    decision: exclude
+    matches:
+        $a: .ip == "8.8.4.4"
+    condition: $a
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+        fake_event!(TestEvent, id = 1, source = "test", (".ip", "8.8.4.4"));
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        assert!(!sr.is_default_exclude());
+        assert!(sr.detection_decision().is_exclude());
+    }
+
+    #[test]
+    fn test_decision_exclude_stops_processing() {
+        // Test that exclude decisions stop further rule processing
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+---
+name: first.rule
+matches:
+    $a: .field == "value"
+condition: $a
+
+---
+name: exclude.rule
+decision: exclude
+matches:
+    $b: .other == "trigger"
+condition: $b
+
+---
+name: third.rule
+matches:
+    $c: .another == "should_not_match"
+condition: $c
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        fake_event!(
+            TestEvent,
+            id = 1,
+            source = "test",
+            (".field", "value"),
+            (".other", "trigger"),
+            (".another", "should_not_match")
+        );
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        assert!(!sr.includes_detection("first.rule"));
+        assert!(!sr.includes_detection("exclude.rule"));
+        assert!(!sr.includes_detection("third.rule"));
+        assert!(sr.detection_decision().is_exclude())
+    }
+
+    #[test]
+    fn test_decision_include_continues_processing() {
+        // Test that include decisions allow all rules to process
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+---
+name: first.rule
+matches:
+    $a: .field == "value"
+condition: $a
+
+---
+name: second.rule
+matches:
+    $b: .other == "trigger"
+condition: $b
+
+---
+name: third.rule
+matches:
+    $c: .another == "match"
+condition: $c
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        fake_event!(
+            TestEvent,
+            id = 1,
+            source = "test",
+            (".field", "value"),
+            (".other", "trigger"),
+            (".another", "match")
+        );
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        assert!(sr.includes_detection("first.rule"));
+        assert!(sr.includes_detection("second.rule"));
+        assert!(sr.includes_detection("third.rule"));
+        assert!(sr.detection_decision().is_include())
+    }
+
+    #[test]
+    fn test_decision_mixed_scenarios_1() {
+        // Test mixed include/exclude scenarios
+        // Both detection and filter should be included
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+---
+name: filter.rule
+type: filter
+matches:
+    $a: .field == "value"
+condition: $a
+
+---
+name: detection.rule
+matches:
+    $b: .other == "trigger"
+condition: $b
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        fake_event!(
+            TestEvent,
+            id = 1,
+            source = "test",
+            (".field", "value"),
+            (".other", "trigger")
+        );
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        assert!(sr.includes_filter("filter.rule"));
+        assert!(sr.includes_detection("detection.rule"));
+        assert!(sr.filter_decision().is_include());
+        assert!(sr.detection_decision().is_include());
+    }
+
+    #[test]
+    fn test_decision_mixed_scenarios_2() {
+        // Test mixed include/exclude scenarios where
+        // we exclude event in a filter but a detection
+        // might include it too.
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+---
+name: filter.rule
+type: filter
+decision: exclude
+matches:
+    $a: .field == "value"
+condition: $a
+
+---
+name: detection.rule
+matches:
+    $b: .other == "trigger"
+condition: $b
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        fake_event!(
+            TestEvent,
+            id = 1,
+            source = "test",
+            (".field", "value"),
+            (".other", "trigger")
+        );
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        // filter must exclude
+        assert!(!sr.includes_filter("filter.rule"));
+        assert!(sr.filter_decision().is_exclude());
+
+        // detection must include
+        assert!(sr.includes_detection("detection.rule"));
+        assert!(sr.detection_decision().is_include());
+    }
+
+    #[test]
+    fn test_decision_mixed_scenarios_3() {
+        // Test mixed include/exclude scenarios where
+        // we exclude event in adetection but a filter
+        // includes it.
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+---
+name: filter.rule
+type: filter
+matches:
+    $a: .field == "value"
+condition: $a
+
+---
+name: detection.rule
+decision: exclude
+matches:
+    $b: .other == "trigger"
+condition: $b
+    "#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        fake_event!(
+            TestEvent,
+            id = 1,
+            source = "test",
+            (".field", "value"),
+            (".other", "trigger")
+        );
+
+        let sr = e.scan(&TestEvent {}).unwrap();
+        // filter must include
+        assert!(sr.includes_filter("filter.rule"));
+        assert!(sr.filter_decision().is_include());
+
+        // detection must exclude
+        assert!(!sr.includes_detection("detection.rule"));
+        assert!(sr.detection_decision().is_exclude());
     }
 }
