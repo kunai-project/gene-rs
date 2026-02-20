@@ -4,7 +4,6 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::{
     compiler,
@@ -478,12 +477,6 @@ impl<'s> ScanResult<'s> {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("{0}")]
-    Rule(#[from] rules::Error),
-}
-
 #[derive(Debug, Default, Clone)]
 struct RuleCacheEntry {
     filters: Vec<usize>,
@@ -703,12 +696,15 @@ impl Engine {
     }
 
     /// Scan an [`Event`] with all the rules loaded in the [`Engine`]
-    pub fn scan<E>(&mut self, event: &E) -> Result<ScanResult<'_>, Box<(ScanResult<'_>, Error)>>
+    pub fn scan<E>(
+        &mut self,
+        event: &E,
+    ) -> Result<ScanResult<'_>, Box<(ScanResult<'_>, rules::Error)>>
     where
         E: for<'e> Event<'e>,
     {
         let mut sr = ScanResult::default_exclude();
-        let mut last_err: Option<Error> = None;
+        let mut last_err: Option<rules::Error> = None;
 
         let src = event.source();
         let id = event.id();
@@ -743,10 +739,7 @@ impl Engine {
                                     continue;
                                 }
 
-                                match r
-                                    .match_event_with_states(event, &states)
-                                    .map_err(Error::from)
-                                {
+                                match r.match_event_with_states(event, &states) {
                                     Ok(ok) => {
                                         states.insert(Cow::Borrowed(r.name.as_str()), ok);
                                     }
@@ -761,18 +754,13 @@ impl Engine {
                 // of dependency matching of whatever rule
                 let ok = match states.get(&Cow::Borrowed(r.name.as_str())) {
                     Some(&ok) => ok,
-                    None => {
-                        match r
-                            .match_event_with_states(event, &states)
-                            .map_err(Error::from)
-                        {
-                            Ok(ok) => ok,
-                            Err(e) => {
-                                last_err = Some(e);
-                                false
-                            }
+                    None => match r.match_event_with_states(event, &states) {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            last_err = Some(e);
+                            false
                         }
-                    }
+                    },
                 };
 
                 // we process scan result
