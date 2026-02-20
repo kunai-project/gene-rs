@@ -99,7 +99,24 @@ impl std::fmt::Display for XPath {
 }
 
 impl XPath {
-    /// builds an `XPath` from a [str]
+    /// Parses a string into an `XPath`.
+    ///
+    /// Creates an `XPath` from a string representation, validating the path structure
+    /// and extracting segments. The path string should use dot notation (e.g., `.field.subfield`)
+    /// to represent nested field access.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PathError` if the path string is malformed or contains invalid characters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::XPath;
+    ///
+    /// let path = XPath::parse(".field.subfield").unwrap();
+    /// assert_eq!(path.to_string_lossy(), ".field.subfield");
+    /// ```
     #[inline]
     pub fn parse<S: AsRef<str>>(s: S) -> Result<Self, PathError> {
         Ok(XPath {
@@ -108,20 +125,62 @@ impl XPath {
         })
     }
 
-    /// getter to the segments of the path. If a path has been
-    /// built from `.a.b.c` the segments will be `["a", "b", "c"]` as `.` is the
-    /// path segments separator
+    /// Returns a reference to the segments of this path.
+    ///
+    /// Path segments are the individual components extracted from the path string.
+    /// For a path like `.a.b.c`, the segments will be `["a", "b", "c"]`.
+    /// The dot (`.`) character is used as the segment separator.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::XPath;
+    ///
+    /// let path = XPath::parse(".field.subfield").unwrap();
+    /// let segments = path.segments();
+    /// assert_eq!(segments, &vec!["field".to_string(), "subfield".to_string()]);
+    /// ```
     #[inline(always)]
-    pub fn segments(&self) -> &Vec<String> {
+    pub fn segments(&self) -> &[String] {
         &self.segments
     }
 
-    /// provides an iterator over the segments of the path
+    /// Returns an iterator over the segments of this path.
+    ///
+    /// This provides a more efficient way to access path segments when you need
+    /// to iterate over them rather than access the full vector. The iterator
+    /// yields string references to each segment.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::XPath;
+    ///
+    /// let path = XPath::parse(".field.subfield").unwrap();
+    /// let mut iter = path.iter_segments();
+    /// assert_eq!(iter.next(), Some(&"field".to_string()));
+    /// assert_eq!(iter.next(), Some(&"subfield".to_string()));
+    /// assert_eq!(iter.next(), None);
+    /// ```
     #[inline(always)]
     pub fn iter_segments(&self) -> core::slice::Iter<'_, std::string::String> {
         self.segments.iter()
     }
 
+    /// Returns a borrowed string representation of this path.
+    ///
+    /// This method provides efficient access to the original path string
+    /// without allocation. The returned `Cow` will typically be a borrowed
+    /// reference to the internal string data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use gene::XPath;
+    ///
+    /// let path = XPath::parse(".field.subfield").unwrap();
+    /// assert_eq!(path.to_string_lossy(), ".field.subfield");
+    /// ```
     #[inline(always)]
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         Cow::from(&self.path)
