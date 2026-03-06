@@ -718,7 +718,7 @@ mod test {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{Event, FieldGetter, FieldValue};
+    use crate::{Event, FieldGetter, FieldValue, FieldNameIterator};
     use gene_derive::{Event, FieldGetter};
 
     macro_rules! def_event {
@@ -741,7 +741,7 @@ mod test {
 
             impl<'f> FieldGetter<'f> for $name{
 
-                fn get_from_iter(&self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue<'_>>{
+                fn get_from_iter(&self, _: FieldNameIterator<'_>) -> Option<$crate::FieldValue<'_>>{
                     unimplemented!()
                 }
 

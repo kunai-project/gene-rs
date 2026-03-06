@@ -5,7 +5,7 @@ use std::{
 };
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, Rule};
+use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, Rule, FieldNameIterator};
 use gene_derive::{Event, FieldGetter};
 use libflate::gzip;
 use serde::{Deserialize, Deserializer};

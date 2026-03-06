@@ -491,7 +491,7 @@ struct RuleCacheEntry {
 ///
 /// ```
 /// use gene_derive::{Event, FieldGetter};
-/// use gene::{Compiler, Engine, Event,FieldGetter,FieldValue};
+/// use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, FieldNameIterator};
 /// use std::borrow::Cow;
 ///
 /// #[derive(FieldGetter)]
@@ -786,6 +786,7 @@ impl Engine {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{FieldGetter, FieldNameIterator};
 
     macro_rules! fake_event {
         ($name:tt, id=$id:literal, source=$source:literal, $(($path:literal, $value:expr)),*) => {
@@ -793,7 +794,7 @@ mod test {
 
             impl<'f> FieldGetter<'f> for $name{
 
-                fn get_from_iter(&'f self, _: core::slice::Iter<'_, std::string::String>) -> Option<$crate::FieldValue<'f>>{
+                fn get_from_iter(&'f self, _: FieldNameIterator<'_>) -> Option<$crate::FieldValue<'f>>{
                     unimplemented!()
                 }
 

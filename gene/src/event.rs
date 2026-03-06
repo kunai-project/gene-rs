@@ -7,6 +7,115 @@ use std::{
 
 use crate::{FieldValue, XPath};
 
+/// An iterator over field names in an [`XPath`]-like path.
+///
+/// This iterator is used to traverse field names in structured data paths,
+/// such as `.parent.child.field` in jq notation. It provides methods to
+/// access the current field name and advance to the next one.
+///
+/// The iterator can be created from an [`XPath`] using the [`From`] trait,
+/// or directly from a slice of field names.
+///
+/// # Examples
+///
+/// ```
+/// use gene::{FieldNameIterator, XPath};
+///
+/// // From XPath
+/// let path = XPath::parse(".parent.child.field").unwrap();
+/// let mut iter = FieldNameIterator::from(&path);
+///
+/// assert_eq!(iter.next_field_name(), Some("parent"));
+/// assert_eq!(iter.next_field_name(), Some("child"));
+/// assert_eq!(iter.next_field_name(), Some("field"));
+/// assert_eq!(iter.next_field_name(), None);
+///
+/// // From field names directly
+/// let field_names = vec!["parent".to_string(), "child".to_string(), "field".to_string()];
+/// let mut iter = FieldNameIterator::from(field_names.as_slice());
+///
+/// assert_eq!(iter.next_field_name(), Some("parent"));
+/// assert_eq!(iter.next_field_name(), Some("child"));
+/// assert_eq!(iter.next_field_name(), Some("field"));
+/// assert_eq!(iter.next_field_name(), None);
+/// ```
+pub struct FieldNameIterator<'f> {
+    i: Option<usize>,
+    field_names: &'f [String],
+}
+
+impl<'f> From<&'f [String]> for FieldNameIterator<'f> {
+    fn from(value: &'f [String]) -> Self {
+        Self {
+            i: None,
+            field_names: value,
+        }
+    }
+}
+
+impl<'f> From<&'f XPath> for FieldNameIterator<'f> {
+    fn from(value: &'f XPath) -> Self {
+        value.segments().into()
+    }
+}
+
+impl<'f> FieldNameIterator<'f> {
+    /// Advances the iterator and returns the next field name.
+    ///
+    /// This method moves the iterator to the next position and returns the field name
+    /// at that position. On the first call, it returns the first field name.
+    /// When the iterator reaches the end, it returns `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::FieldNameIterator;
+    ///
+    /// let field_names = vec!["field1".to_string(), "field2".to_string()];
+    /// let mut iter = FieldNameIterator::from(field_names.as_slice());
+    ///
+    /// assert_eq!(iter.next_field_name(), Some("field1"));
+    /// assert_eq!(iter.next_field_name(), Some("field2"));
+    /// assert_eq!(iter.next_field_name(), None);
+    /// ```
+    #[inline]
+    pub fn next_field_name(&mut self) -> Option<&str> {
+        match self.i.as_mut() {
+            Some(i) => {
+                *i = i.checked_add(1)?;
+                self.field_names.get(*i).map(|s| s.as_ref())
+            }
+            None => {
+                self.i = Some(0);
+                self.field_names.first().map(|s| s.as_ref())
+            }
+        }
+    }
+
+    /// Checks if the iterator is at the last field name.
+    ///
+    /// Returns `true` if the current position is at the last field name in the path,
+    /// indicating that this is a terminal field access. Returns `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gene::FieldNameIterator;
+    ///
+    /// let field_names = vec!["field1".to_string(), "field2".to_string()];
+    /// let mut iter = FieldNameIterator::from(field_names.as_slice());
+    ///
+    /// assert_eq!(iter.next_field_name(), Some("field1"));
+    /// assert!(!iter.is_terminal()); // At start, not terminal
+    /// assert_eq!(iter.next_field_name(), Some("field2"));
+    /// assert!(iter.is_terminal()); // After advancing once, at last field
+    /// ```
+    #[inline(always)]
+    pub fn is_terminal(&self) -> bool {
+        self.i.unwrap_or_default() == self.field_names.len() - 1
+    }
+}
+
 /// Trait representing a log event that can be scanned by the engine.
 ///
 /// Events provide access to their unique identifier, source, and field values
@@ -16,7 +125,7 @@ use crate::{FieldValue, XPath};
 /// # Examples
 ///
 /// ```
-/// use gene::{FieldValue, Event, FieldGetter};
+/// use gene::{FieldValue, Event, FieldGetter, FieldNameIterator};
 /// use gene_derive::{Event, FieldGetter};
 /// use std::borrow::Cow;
 ///
@@ -54,7 +163,7 @@ pub trait Event<'event>: FieldGetter<'event> {
 /// # Examples
 ///
 /// ```
-/// use gene::{FieldGetter, FieldValue};
+/// use gene::{FieldGetter, FieldValue, FieldNameIterator};
 /// use std::net::IpAddr;
 ///
 /// struct NetworkEvent {
@@ -66,9 +175,9 @@ pub trait Event<'event>: FieldGetter<'event> {
 /// impl<'f> FieldGetter<'f> for NetworkEvent {
 ///     fn get_from_iter(
 ///         &'f self,
-///         mut i: core::slice::Iter<'_, std::string::String>,
+///         mut i: FieldNameIterator,
 ///     ) -> Option<FieldValue<'f>> {
-///         match i.next().map(|s| s.as_str()) {
+///         match i.next_field_name() {
 ///             Some("source_ip") => Some(self.source_ip.to_string().into()),
 ///             Some("destination_ip") => Some(self.destination_ip.to_string().into()),
 ///             Some("port") => Some(self.port.into()),
@@ -109,7 +218,7 @@ pub trait FieldGetter<'field> {
     /// override [`Self::get_from_iter`] instead of overriding this method.
     #[inline]
     fn get_from_path(&'field self, path: &XPath) -> Option<FieldValue<'field>> {
-        self.get_from_iter(path.iter_segments())
+        self.get_from_iter(FieldNameIterator::from(path))
     }
 
     /// Gets a field value using an iterator of path segments.
@@ -126,10 +235,7 @@ pub trait FieldGetter<'field> {
     ///
     /// * `Some(FieldValue)` if the field exists and can be accessed
     /// * `None` if the field does not exist or cannot be accessed
-    fn get_from_iter(
-        &'field self,
-        i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<FieldValue<'field>>;
+    fn get_from_iter(&'field self, i: FieldNameIterator<'_>) -> Option<FieldValue<'field>>;
 }
 
 macro_rules! impl_with_getter {
@@ -137,8 +243,8 @@ macro_rules! impl_with_getter {
         $(
             impl<'f> FieldGetter<'f> for $type {
                 #[inline]
-                fn get_from_iter(&'f self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue<'f>> {
-                    if i.len() > 0 {
+                fn get_from_iter(&'f self, i: FieldNameIterator<'_>) -> Option<FieldValue<'f>> {
+                    if !i.is_terminal() {
                         return None;
                     }
                     Some(self.$getter().into())
@@ -153,8 +259,8 @@ macro_rules! impl_for_type {
         $(
             impl<'f> FieldGetter<'f>  for $type {
                 #[inline]
-                fn get_from_iter(&'f self, i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue<'f>> {
-                    if i.len() > 0 {
+                fn get_from_iter(&'f self, i: FieldNameIterator<'_>) -> Option<FieldValue<'f>> {
+                    if !i.is_terminal() {
                         return None;
                     }
                     Some(self.into())
@@ -196,10 +302,7 @@ where
     T: FieldGetter<'field>,
 {
     #[inline]
-    fn get_from_iter(
-        &'field self,
-        i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<FieldValue<'field>> {
+    fn get_from_iter(&'field self, i: FieldNameIterator<'_>) -> Option<FieldValue<'field>> {
         match self {
             Some(v) => v.get_from_iter(i),
             None => Some(FieldValue::None),
@@ -212,11 +315,8 @@ where
     T: FieldGetter<'f>,
 {
     #[inline]
-    fn get_from_iter(
-        &'f self,
-        mut i: core::slice::Iter<'_, std::string::String>,
-    ) -> Option<FieldValue<'f>> {
-        let k = match i.next() {
+    fn get_from_iter(&'f self, mut i: FieldNameIterator<'_>) -> Option<FieldValue<'f>> {
+        let k = match i.next_field_name() {
             Some(s) => s,
             None => {
                 // No key to look up, return Some to indicate map existence
@@ -238,9 +338,9 @@ macro_rules! impl_field_getter_for_vec {
                 #[inline]
                 fn get_from_iter(
                     &'f self,
-                    i: core::slice::Iter<'_, std::string::String>,
+                    i: FieldNameIterator<'_>,
                 ) -> Option<FieldValue<'f>> {
-                    if i.len() > 0 {
+                    if !i.is_terminal(){
                         return None;
                     }
 

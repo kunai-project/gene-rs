@@ -44,7 +44,7 @@
 //! ## Quickstart
 //!
 //! ```
-//! use gene::{Compiler, Engine, Event, FieldGetter, FieldValue};
+//! use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, FieldNameIterator};
 //! use gene_derive::{Event, FieldGetter};
 //!
 //! // 1. Define your event structure
@@ -177,7 +177,7 @@
 //! Gene is licensed under the **GPL-3.0** - see the `LICENSE` file for details.
 
 mod event;
-pub use event::{Event, FieldGetter};
+pub use event::{Event, FieldGetter, FieldNameIterator};
 
 pub mod rules;
 pub use rules::Rule;
