@@ -1,4 +1,4 @@
-<div align="center"><img src="assets/logo.svg" width="250"/></div>
+<div align="center"><img src="https://raw.githubusercontent.com/kunai-project/gene-rs/refs/heads/main/assets/logo.svg" width="250"/></div>
 
 <!-- cargo-rdme start -->
 
