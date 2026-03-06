@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     compiler,
     rules::{self, bound_severity, CompiledRule, Decision},
-    Compiler, Event, FieldValue,
+    Compiler, Event, FieldValue, FieldNameIterator
 };
 
 use crate::FieldGetter;
