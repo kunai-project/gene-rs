@@ -44,7 +44,7 @@ cargo add gene_derive
 ## Quickstart
 
 ```rust
-use gene::{Compiler, Engine, Event, FieldGetter, FieldValue};
+use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, FieldNameIterator};
 use gene_derive::{Event, FieldGetter};
 
 // 1. Define your event structure

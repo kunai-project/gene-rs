@@ -18,7 +18,7 @@ pub enum PathError {
 ///
 /// ```rust
 /// use ::gene_derive::FieldGetter;
-/// use ::gene::{XPath, FieldGetter, FieldValue};
+/// use ::gene::{XPath, FieldGetter, FieldValue, FieldNameIterator};
 ///
 /// #[derive(FieldGetter)]
 /// struct LogData

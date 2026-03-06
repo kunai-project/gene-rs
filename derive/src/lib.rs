@@ -213,7 +213,7 @@ impl EventDerive {
 ///
 /// ```rust
 /// use gene_derive::{Event, FieldGetter};
-/// use gene::{Event,FieldGetter,FieldValue};
+/// use gene::{Event, FieldGetter, FieldValue, FieldNameIterator};
 /// use std::borrow::Cow;
 ///
 /// #[derive(Event, FieldGetter)]
@@ -287,7 +287,7 @@ impl FieldGetterDerive {
             span =>
             #(#fields)|* => {
                 #[allow(clippy::redundant_closure_call)]
-                |x: &#flt dyn FieldGetter<#flt>, i: core::slice::Iter<'_, std::string::String>| -> Option<FieldValue<#flt>> {
+                |x: &#flt dyn FieldGetter<#flt>, i: FieldNameIterator| -> Option<FieldValue<#flt>> {
                     x.get_from_iter(i)
                 }(&self.#field_name, i)
             }});
@@ -358,14 +358,14 @@ impl FieldGetterDerive {
         let expand = quote! {
             impl #trait_generics FieldGetter<#flt> for #struct_name #generics #generic_trait_bound{
                 #[inline(always)]
-                fn get_from_iter(&#flt self, mut i: core::slice::Iter<'_, std::string::String>) -> Option<FieldValue<#flt>> {
+                fn get_from_iter(&#flt self, mut i: FieldNameIterator) -> Option<FieldValue<#flt>> {
 
-                    let field = match i.next() {
+                    let field = match i.next_field_name() {
                         Some(s) => s,
                         None => return Some(FieldValue::Some),
                     };
 
-                    match field.as_str() {
+                    match field {
                         #(#arms)*
                         _ => None,
                     }
