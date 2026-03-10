@@ -1,6 +1,10 @@
 use std::{borrow::Cow, collections::HashMap, str::FromStr};
 
-use pest::{iterators::Pairs, Parser};
+use pest::{
+    error::ErrorVariant,
+    iterators::{Pair, Pairs},
+    Parser, Span,
+};
 use pest_derive::Parser;
 use regex::Regex;
 use thiserror::Error;
@@ -52,18 +56,23 @@ impl MatchParser {
     fn parse_input<S: AsRef<str>>(input: S) -> Result<Match, Error> {
         let mut pairs = MatchParser::parse(Rule::matcher, input.as_ref()).map_err(Box::new)?;
         match pairs.next() {
-            Some(pairs) => match pairs.into_inner().next() {
-                Some(pairs) => match pairs.as_rule() {
-                    Rule::direct_match => DirectMatch::from_str(input.as_ref()).map(Match::from),
-                    Rule::indirect_match => {
-                        IndirectMatch::from_str(input.as_ref()).map(Match::from)
-                    }
-                    Rule::rule_match => RuleMatch::parse(pairs.into_inner()).map(Match::from),
-                    _ => Err(Error::parser("unknown match format")),
-                },
-                _ => Err(Error::parser("match empty inner pairs")),
-            },
-            _ => Err(Error::parser("invalid match")),
+            Some(pair) => {
+                let span = pair.as_span();
+                match pair.into_inner().next() {
+                    Some(pair) => match pair.as_rule() {
+                        Rule::direct_match => {
+                            DirectMatch::from_str(input.as_ref()).map(Match::from)
+                        }
+                        Rule::indirect_match => {
+                            IndirectMatch::from_str(input.as_ref()).map(Match::from)
+                        }
+                        Rule::rule_match => Ok(Match::from(RuleMatch::from_pair(pair))),
+                        _ => Err(Error::parser("unknown match format", pair.as_span())),
+                    },
+                    _ => Err(Error::parser("match empty inner pairs", span)),
+                }
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -111,12 +120,10 @@ pub enum Error {
         expect: &'static str,
         got: &'static str,
     },
-    #[error("match parser {0}")]
-    Parser(String),
     #[error("{0}")]
     Path(#[from] PathError),
     #[error("{0}")]
-    Pest(#[from] Box<pest::error::Error<Rule>>),
+    Parser(#[from] Box<pest::error::Error<Rule>>),
     #[error("{0}")]
     ParseNum(#[from] NumberError),
     #[error("{0}")]
@@ -124,9 +131,14 @@ pub enum Error {
 }
 
 impl Error {
-    #[inline(always)]
-    fn parser<S: AsRef<str>>(s: S) -> Self {
-        Self::Parser(s.as_ref().into())
+    #[inline]
+    fn parser<S: ToString>(msg: S, span: Span<'_>) -> Self {
+        Self::Parser(Box::new(pest::error::Error::new_from_span(
+            ErrorVariant::CustomError {
+                message: msg.to_string(),
+            },
+            span,
+        )))
     }
 
     #[inline(always)]
@@ -254,7 +266,7 @@ impl IndirectMatch {
 // Direct Match implementation
 
 /// Enum used to describe the match operator of [DirectMatch]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum Op {
     Eq,
     Lt,
@@ -263,6 +275,26 @@ enum Op {
     Gte,
     Rex,
     Flag,
+}
+
+impl Op {
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        debug_assert_eq!(pair.as_rule(), Rule::op);
+        // cannot panic op must have an inner pair
+        let pair = pair.into_inner().next().unwrap();
+
+        match pair.as_rule() {
+            Rule::eq => Op::Eq,
+            Rule::lte => Op::Lte,
+            Rule::lt => Op::Lt,
+            Rule::gte => Op::Gte,
+            Rule::gt => Op::Gt,
+            Rule::rex => Op::Rex,
+            Rule::flag => Op::Flag,
+            // cannot be something else
+            _ => unreachable!(),
+        }
+    }
 }
 
 /// DirectMatch represensts the needed information to perform a matching
@@ -274,58 +306,82 @@ pub(crate) struct DirectMatch {
     value: MatchValue,
 }
 
+impl MatchValue {
+    fn from_pair(op: Op, pair: Pair<'_, Rule>) -> Result<Self, Error> {
+        debug_assert_eq!(pair.as_rule(), Rule::value);
+
+        // this cannot panic as value must have at least one inner pair
+        let inner_pair = pair.into_inner().next().unwrap();
+        let span = inner_pair.as_span();
+
+        match op {
+            Op::Eq => match inner_pair.as_rule() {
+                Rule::number | Rule::hex => {
+                    let num_str = inner_pair.as_str().trim_matches('\'').trim_matches('"');
+                    Ok(MatchValue::StringOrNumber(
+                        num_str.into(),
+                        Number::from_str(num_str)?,
+                    ))
+                }
+                Rule::value_dq => Ok(MatchValue::String(
+                    inner_pair.as_str().trim_matches('"').into(),
+                )),
+                Rule::value_sq => Ok(MatchValue::String(
+                    inner_pair.as_str().trim_matches('\'').into(),
+                )),
+                Rule::none => Ok(MatchValue::None),
+                Rule::some => Ok(MatchValue::Some),
+                Rule::bool_true => Ok(MatchValue::Bool(true)),
+                Rule::bool_false => Ok(MatchValue::Bool(false)),
+                _ => {
+                    unreachable!()
+                }
+            },
+            Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Flag => {
+                let num_str = inner_pair.as_str().trim_matches('\'').trim_matches('"');
+                match inner_pair.as_rule() {
+                    Rule::number | Rule::hex => MatchValue::value_number(num_str),
+                    _ => Err(Error::parser("value must be a number", span)),
+                }
+            }
+            Op::Rex => match inner_pair.as_rule() {
+                Rule::value_dq => MatchValue::value_regex(inner_pair.as_str().trim_matches('"')),
+                Rule::value_sq => MatchValue::value_regex(inner_pair.as_str().trim_matches('\'')),
+                _ => Err(Error::parser("value must be a quoted string", span)),
+            },
+        }
+    }
+}
+
 impl FromStr for DirectMatch {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut pairs = MatchParser::parse(Rule::direct_match, s).map_err(Box::new)?;
+        let pairs = MatchParser::parse(Rule::_direct_match, s).map_err(Box::new)?;
 
-        let mut inner_pairs = pairs.next().unwrap().into_inner();
+        let mut op = None;
+        let mut field_path = None;
+        let mut value = None;
 
-        // the code must not panic here as everything got validated by the parser
-        let field_path = XPath::from_str(inner_pairs.next().unwrap().as_str()).unwrap();
-
-        let rule_op = inner_pairs.next().unwrap().as_rule();
-
-        let str_value = inner_pairs.next().unwrap().as_str();
-        let is_none = str_value == "none";
-        let is_some = str_value == "some";
-        let is_bool_true = str_value.to_lowercase() == "true";
-        let is_bool_false = str_value.to_lowercase() == "false";
-
-        // easier to trim quotes here rather than walking parsed items
-        let sanit_value = str_value.trim_matches('\'').trim_matches('"');
-
-        let (op, value) = match rule_op {
-            Rule::eq => (Op::Eq, {
-                if is_none {
-                    MatchValue::None
-                } else if is_some {
-                    MatchValue::Some
-                } else if is_bool_true {
-                    MatchValue::Bool(true)
-                } else if is_bool_false {
-                    MatchValue::Bool(false)
-                } else if let Ok(i) = Number::from_str(sanit_value) {
-                    // handle the case where string can also be an
-                    // integer. Number::from_str manages hex prefix
-                    MatchValue::StringOrNumber(sanit_value.into(), i)
-                } else {
-                    MatchValue::String(sanit_value.into())
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::field_path => {
+                    field_path = Some(XPath::parse(pair.as_str())?);
                 }
-            }),
-            Rule::lt => (Op::Lt, MatchValue::value_number(sanit_value)?),
-            Rule::lte => (Op::Lte, MatchValue::value_number(sanit_value)?),
-            Rule::gt => (Op::Gt, MatchValue::value_number(sanit_value)?),
-            Rule::gte => (Op::Gte, MatchValue::value_number(sanit_value)?),
-            Rule::rex => (Op::Rex, MatchValue::value_regex(sanit_value)?),
-            Rule::flag => (Op::Flag, MatchValue::value_number(sanit_value)?),
-            _ => unreachable!(),
-        };
+                Rule::op => op = Some(Op::from_pair(pair)),
+                Rule::value => value = Some(MatchValue::from_pair(op.unwrap(), pair)?),
+                Rule::EOI => {}
+                // cannot be anything else
+                _ => {
+                    unreachable!()
+                }
+            }
+        }
 
+        // parser guarantees those values are available
         let m = DirectMatch {
-            field_path,
-            op,
-            value,
+            field_path: field_path.unwrap(),
+            op: op.unwrap(),
+            value: value.unwrap(),
         };
 
         Ok(m)
@@ -456,14 +512,17 @@ pub(crate) struct RuleMatch(String);
 
 impl RuleMatch {
     #[inline]
-    fn parse(mut pairs: Pairs<'_, Rule>) -> Result<Self, Error> {
-        match pairs.next() {
-            Some(pairs) => match pairs.as_rule() {
-                Rule::rule_name => Ok(RuleMatch(pairs.as_str().into())),
-                _ => Err(Error::parser("invalid rule name")),
-            },
-            _ => Err(Error::parser("invalid rule match")),
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        debug_assert_eq!(pair.as_rule(), Rule::rule_match);
+        let mut out = None;
+        for pair in pair.into_inner() {
+            match pair.as_rule() {
+                Rule::rule_name => out = Some(RuleMatch(pair.as_str().into())),
+                // grammar doesn't allow anything else
+                _ => unreachable!(),
+            }
         }
+        out.unwrap()
     }
 
     #[inline]
@@ -504,23 +563,39 @@ mod test {
             .match_value(&43.into())
             .unwrap());
 
+        // should work without quotes too
+        assert!(DirectMatch::from_str(r#".data.exe.size >= 42"#)
+            .unwrap()
+            .match_value(&43.into())
+            .unwrap());
+
         assert!(DirectMatch::from_str(r#".data.exe.size > '42'"#)
             .unwrap()
             .match_value(&43.into())
             .unwrap());
 
-        println!(
-            "{:#?}",
-            DirectMatch::from_str(r#".data.exe.size &= '0x100040'"#)
-                .unwrap()
-                .match_value(&0x40.into())
-        );
-        println!(
-            "{:?}",
-            DirectMatch::from_str(r#".data.exe.size ~= 'toast'"#)
-                .unwrap()
-                .match_value(&"toast".into())
-        );
+        // should work without quotes too
+        assert!(DirectMatch::from_str(r#".data.exe.size > 42"#)
+            .unwrap()
+            .match_value(&43.into())
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data.exe.size &= '0x40'"#)
+            .unwrap()
+            .match_value(&0x100040.into())
+            .unwrap());
+
+        // should work without quotes too
+        assert!(DirectMatch::from_str(r#".data.exe.size &= 0x40"#)
+            .inspect_err(|e| println!("{e}"))
+            .unwrap()
+            .match_value(&0x100040.into())
+            .unwrap());
+
+        assert!(DirectMatch::from_str(r#".data.exe.size ~= 'toast'"#)
+            .unwrap()
+            .match_value(&"toast".into())
+            .unwrap());
 
         assert!(DirectMatch::from_str(r#".data is none"#)
             .unwrap()
