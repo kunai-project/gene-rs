@@ -1537,4 +1537,45 @@ condition: $b
         assert!(!sr.includes_detection("detection.rule"));
         assert!(sr.detection_decision().is_exclude());
     }
+
+    #[test]
+    fn test_match_through_arc() {
+        use gene_derive::{Event, FieldGetter};
+        use std::sync::Arc;
+
+        #[derive(FieldGetter)]
+        struct Inner {
+            field: String,
+            num: u64,
+        }
+
+        #[derive(Event, FieldGetter)]
+        #[event(id = 1, source = "test".into())]
+        struct ArcEvent {
+            data: Arc<Inner>,
+        }
+
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+name: test
+matches:
+    $a: .data.field == "value"
+    $b: .data.num > 41
+condition: $a and $b
+"#,
+        )
+        .unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
+        let sr = e
+            .scan(&ArcEvent {
+                data: Arc::new(Inner {
+                    field: "value".into(),
+                    num: 42,
+                }),
+            })
+            .unwrap();
+        assert!(sr.includes_detection("test"));
+    }
 }
