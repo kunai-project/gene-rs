@@ -3,6 +3,8 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
 };
 
 use crate::{FieldValue, XPath};
@@ -310,6 +312,24 @@ where
     }
 }
 
+macro_rules! impl_for_smart_pointer {
+    ($($ptr:ident),*) => {
+        $(
+            impl<'field, T> FieldGetter<'field> for $ptr<T>
+            where
+                T: FieldGetter<'field> + ?Sized,
+            {
+                #[inline]
+                fn get_from_iter(&'field self, i: FieldNameIterator<'_>) -> Option<FieldValue<'field>> {
+                    (**self).get_from_iter(i)
+                }
+            }
+        )*
+    };
+}
+
+impl_for_smart_pointer!(Arc, Rc, Box);
+
 impl<'f, T> FieldGetter<'f> for HashMap<String, T>
 where
     T: FieldGetter<'f>,
@@ -600,5 +620,94 @@ mod test {
         // Test accessing non-existing nested keys
         assert_eq!(test_struct.get_from_path(&path!(".data.unknown")), None);
         assert_eq!(test_struct.get_from_path(&path!(".metadata.missing")), None);
+    }
+
+    #[test]
+    fn test_smart_pointer_field_getter() {
+        #[derive(FieldGetter)]
+        struct Inner {
+            field: String,
+            num: u64,
+        }
+
+        fn inner() -> Inner {
+            Inner {
+                field: "value".into(),
+                num: 42,
+            }
+        }
+
+        #[derive(FieldGetter)]
+        struct Plain {
+            inner: Inner,
+        }
+
+        #[derive(FieldGetter)]
+        struct Outer {
+            arc: Arc<Inner>,
+            rc: Rc<Inner>,
+            boxed: Box<Inner>,
+            opt_some: Option<Arc<Inner>>,
+            opt_none: Option<Arc<Inner>>,
+            arc_str: Arc<str>,
+            rc_str: Rc<str>,
+            box_str: Box<str>,
+        }
+
+        let plain = Plain { inner: inner() };
+        let outer = Outer {
+            arc: Arc::new(inner()),
+            rc: Rc::new(inner()),
+            boxed: Box::new(inner()),
+            opt_some: Some(Arc::new(inner())),
+            opt_none: None,
+            arc_str: "arc str".into(),
+            rc_str: "rc str".into(),
+            box_str: "box str".into(),
+        };
+
+        let xp = |s: String| XPath::from_str(&s).unwrap();
+        for p in ["arc", "rc", "boxed", "opt_some"] {
+            for f in ["field", "num"] {
+                assert_eq!(
+                    outer.get_from_path(&xp(format!(".{p}.{f}"))),
+                    plain.get_from_path(&xp(format!(".inner.{f}")))
+                );
+            }
+            assert_eq!(
+                outer.get_from_path(&xp(format!(".{p}"))),
+                plain.get_from_path(&path!(".inner"))
+            );
+            assert_eq!(outer.get_from_path(&xp(format!(".{p}.unknown"))), None);
+        }
+
+        assert_eq!(
+            outer.get_from_path(&path!(".arc.field")),
+            Some("value".into())
+        );
+        assert_eq!(outer.get_from_path(&path!(".arc.num")), Some(42u64.into()));
+
+        assert_eq!(
+            outer.get_from_path(&path!(".opt_none")),
+            Some(FieldValue::None)
+        );
+        assert_eq!(
+            outer.get_from_path(&path!(".opt_none.field")),
+            Some(FieldValue::None)
+        );
+
+        assert_eq!(
+            outer.get_from_path(&path!(".arc_str")),
+            Some("arc str".into())
+        );
+        assert_eq!(
+            outer.get_from_path(&path!(".rc_str")),
+            Some("rc str".into())
+        );
+        assert_eq!(
+            outer.get_from_path(&path!(".box_str")),
+            Some("box str".into())
+        );
+        assert_eq!(outer.get_from_path(&path!(".arc_str.nested")), None);
     }
 }
