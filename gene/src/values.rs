@@ -52,7 +52,7 @@ use std::{
     borrow::Cow,
     num::{ParseFloatError, ParseIntError, TryFromIntError},
     ops::BitAnd,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -449,14 +449,40 @@ impl<'s> From<&'s Cow<'s, str>> for FieldValue<'s> {
     }
 }
 
+// Reuses the PathBuf buffer for UTF-8 paths
+#[inline]
+fn pathbuf_into_string(p: PathBuf) -> String {
+    p.into_os_string()
+        .into_string()
+        .unwrap_or_else(|s| s.to_string_lossy().into_owned())
+}
+
 impl<'s> From<Cow<'s, PathBuf>> for FieldValue<'s> {
     fn from(value: Cow<'s, PathBuf>) -> Self {
-        value.to_string_lossy().to_string().into()
+        match value {
+            Cow::Borrowed(p) => p.to_string_lossy().into(),
+            Cow::Owned(p) => pathbuf_into_string(p).into(),
+        }
     }
 }
 
 impl<'s> From<&'s Cow<'s, PathBuf>> for FieldValue<'s> {
     fn from(value: &'s Cow<'s, PathBuf>) -> Self {
+        value.to_string_lossy().into()
+    }
+}
+
+impl<'s> From<Cow<'s, Path>> for FieldValue<'s> {
+    fn from(value: Cow<'s, Path>) -> Self {
+        match value {
+            Cow::Borrowed(p) => p.to_string_lossy().into(),
+            Cow::Owned(p) => pathbuf_into_string(p).into(),
+        }
+    }
+}
+
+impl<'s> From<&'s Cow<'s, Path>> for FieldValue<'s> {
+    fn from(value: &'s Cow<'s, Path>) -> Self {
         value.to_string_lossy().into()
     }
 }
@@ -563,6 +589,8 @@ impl_field_value_vec_conversions!(
     String,
     &'s str,
     Cow<'s, str>,
+    Cow<'s, Path>,
+    Cow<'s, PathBuf>,
     PathBuf,
     i8,
     i16,
