@@ -88,5 +88,41 @@ fn bench_rust_events(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_rust_events);
+// Builds a ladder of dependency diamonds: l{k} depends on a{k} and b{k},
+// which both depend on l{k-1}. Engine construction resolves the dependencies
+// of every rule, so this measures the cost of dependency resolution.
+fn diamond_ladder(depth: usize) -> String {
+    let mut s =
+        String::from("name: l0\ntype: dependency\nmatches:\n  $a: .a == 'x'\ncondition: $a\n");
+    for k in 1..=depth {
+        for side in ["a", "b"] {
+            s.push_str(&format!(
+                "---\nname: {side}{k}\ntype: dependency\nmatches:\n  $r: rule(l{})\ncondition: $r\n",
+                k - 1
+            ));
+        }
+        s.push_str(&format!(
+            "---\nname: l{k}\ntype: dependency\nmatches:\n  $x: rule(a{k})\n  $y: rule(b{k})\ncondition: $x and $y\n"
+        ));
+    }
+    s
+}
+
+fn bench_engine_build(c: &mut Criterion) {
+    let mut group = c.benchmark_group("engine-build");
+    group.sample_size(10);
+
+    for depth in [8, 12, 16] {
+        let mut compiler = Compiler::new();
+        compiler.load_rules_from_str(diamond_ladder(depth)).unwrap();
+        compiler.compile().unwrap();
+
+        group.bench_function(format!("diamond-deps-depth-{depth}"), |b| {
+            b.iter(|| Engine::try_from(compiler.clone()).unwrap())
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_rust_events, bench_engine_build);
 criterion_main!(benches);
