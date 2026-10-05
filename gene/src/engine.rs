@@ -558,9 +558,9 @@ pub struct Engine {
     // all the rules in the engine
     rules: Vec<CompiledRule>,
     // cache the list of rules indexes to match a given (source, id)
-    // key: (source, event_id)
+    // key: source, then event_id (nested so that lookups borrow &str)
     // value: vector of rule indexes
-    rules_cache: HashMap<(String, i64), RuleCacheEntry>,
+    rules_cache: HashMap<String, HashMap<i64, RuleCacheEntry>>,
     // cache rules dependencies
     // key: rule index
     // value: vector of dependency indexes
@@ -609,44 +609,56 @@ impl Engine {
     }
 
     #[inline(always)]
-    fn cache_rules(&mut self, src: String, id: i64) {
-        let key = (src, id);
+    fn cache_rules(&mut self, src: &str, id: i64) {
+        // lookup is done with a borrowed &str so that a cache hit never allocates
+        if self
+            .rules_cache
+            .get(src)
+            .is_some_and(|by_id| by_id.contains_key(&id))
+        {
+            return;
+        }
+
         let mut tmp_filters = BTreeMap::new();
         let mut tmp_detections = BTreeMap::new();
 
-        if !self.rules_cache.contains_key(&key) {
-            for (i, r) in self
-                .rules
-                .iter()
-                // !!! do not enumerate after a filter otherwise indexes will
-                // not be the good ones
-                .enumerate()
-                // we take only filter and detection rules
-                .filter(|(_, r)| r.is_filter() || r.is_detection())
-                // we take only rules that can match on that kind of event
-                .filter(|(_, r)| r.can_match_on(&key.0, id))
-            {
-                if r.is_filter() {
-                    tmp_filters.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
-                } else if r.is_detection() {
-                    tmp_detections.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
-                }
+        for (i, r) in self
+            .rules
+            .iter()
+            // !!! do not enumerate after a filter otherwise indexes will
+            // not be the good ones
+            .enumerate()
+            // we take only filter and detection rules
+            .filter(|(_, r)| r.is_filter() || r.is_detection())
+            // we take only rules that can match on that kind of event
+            .filter(|(_, r)| r.can_match_on(src, id))
+        {
+            if r.is_filter() {
+                tmp_filters.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
+            } else if r.is_detection() {
+                tmp_detections.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
             }
+        }
 
-            self.rules_cache.insert(
-                key,
-                RuleCacheEntry {
-                    filters: tmp_filters.values().rev().cloned().collect(),
-                    detections: tmp_detections.values().rev().cloned().collect(),
-                },
-            );
+        let entry = RuleCacheEntry {
+            filters: tmp_filters.values().rev().cloned().collect(),
+            detections: tmp_detections.values().rev().cloned().collect(),
+        };
+
+        match self.rules_cache.get_mut(src) {
+            Some(by_id) => {
+                by_id.insert(id, entry);
+            }
+            None => {
+                self.rules_cache
+                    .insert(src.to_owned(), HashMap::from([(id, entry)]));
+            }
         }
     }
 
     #[inline(always)]
-    fn cached_rules(&self, src: String, id: i64) -> Option<&RuleCacheEntry> {
-        let key = (src, id);
-        self.rules_cache.get(&key)
+    fn cached_rules(&self, src: &str, id: i64) -> Option<&RuleCacheEntry> {
+        self.rules_cache.get(src).and_then(|by_id| by_id.get(&id))
     }
 
     /// Returns the `Vec` of [CompiledRule] currently loaded in the engine
@@ -680,11 +692,14 @@ impl Engine {
         ) {
             for req_name in eng.rules[rule_idx].depends.iter() {
                 if let Some(&dep) = eng.names.get(req_name) {
-                    rule_dep_search_rec(eng, dep, dfs, mark);
-                    if !mark.contains(&dep) {
-                        dfs.push(dep);
-                        mark.insert(dep);
+                    // rules graph is a DAG (enforced by the compiler) so a
+                    // marked node has its whole sub-graph already pushed
+                    if mark.contains(&dep) {
+                        continue;
                     }
+                    rule_dep_search_rec(eng, dep, dfs, mark);
+                    dfs.push(dep);
+                    mark.insert(dep);
                 }
             }
         }
@@ -709,8 +724,8 @@ impl Engine {
         let src = event.source();
         let id = event.id();
 
-        self.cache_rules(src.clone().into(), id);
-        let cached_rules = self.cached_rules(src.into(), id).unwrap();
+        self.cache_rules(&src, id);
+        let cached_rules = self.cached_rules(&src, id).unwrap();
         let mut states = HashMap::new();
 
         // we iterate over each because we don't want exclude rules from filter
