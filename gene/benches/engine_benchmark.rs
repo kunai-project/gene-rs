@@ -4,7 +4,7 @@ use std::{
     io::{self, Read},
 };
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, Rule, FieldNameIterator};
 use gene_derive::{Event, FieldGetter};
 use libflate::gzip;
@@ -118,7 +118,13 @@ fn bench_engine_build(c: &mut Criterion) {
         compiler.compile().unwrap();
 
         group.bench_function(format!("diamond-deps-depth-{depth}"), |b| {
-            b.iter(|| Engine::try_from(compiler.clone()).unwrap())
+            // Engine::try_from consumes the compiler, so a fresh clone is made
+            // in the untimed setup to measure engine construction only
+            b.iter_batched(
+                || compiler.clone(),
+                |compiler| Engine::try_from(compiler).unwrap(),
+                BatchSize::SmallInput,
+            )
         });
     }
     group.finish();
