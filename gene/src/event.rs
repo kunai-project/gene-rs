@@ -300,6 +300,9 @@ impl_with_getter!(
     (IpAddr, to_string)
 );
 
+#[cfg(feature = "uuid")]
+impl_with_getter!((uuid::Uuid, to_string));
+
 impl<'field, T> FieldGetter<'field> for Option<T>
 where
     T: FieldGetter<'field>,
@@ -710,5 +713,24 @@ mod test {
             Some("box str".into())
         );
         assert_eq!(outer.get_from_path(&path!(".arc_str.nested")), None);
+    }
+
+    #[cfg(feature = "uuid")]
+    #[test]
+    fn test_uuid_field_getter() {
+        #[derive(FieldGetter)]
+        struct WithUuid {
+            id: uuid::Uuid,
+        }
+
+        let s = WithUuid {
+            id: uuid::Uuid::from_u128(0x67e5504410b1426f9247bb680e5fe0c8),
+        };
+
+        assert_eq!(
+            s.get_from_path(&path!(".id")),
+            Some("67e55044-10b1-426f-9247-bb680e5fe0c8".into())
+        );
+        assert_eq!(s.get_from_path(&path!(".id.nested")), None);
     }
 }

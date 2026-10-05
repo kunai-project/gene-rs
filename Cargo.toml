@@ -1,14 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["gene", "derive"]
+members = ["derive", "gene"]
 
 [workspace.package]
 version = "0.7.4"
-rust-version = "1.83.0"
-authors = ["Quentin JEROME"]
 edition = "2021"
+rust-version = "1.83.0"
+documentation = "https://docs.rs/gene"
+readme = "README.md"
+repository = "https://github.com/kunai-project/gene-rs"
 license = "GPL-3.0"
 license-file = "LICENSE"
-readme = "README.md"
-documentation = "https://docs.rs/gene"
-repository = "https://github.com/kunai-project/gene-rs"
