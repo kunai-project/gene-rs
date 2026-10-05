@@ -724,8 +724,14 @@ impl Engine {
         let src = event.source();
         let id = event.id();
 
-        self.cache_rules(&src, id);
-        let cached_rules = self.cached_rules(&src, id).unwrap();
+        // a cache hit costs a single lookup, the cache is filled on miss only
+        let cached_rules = match self.cached_rules(&src, id) {
+            Some(cached) => cached,
+            None => {
+                self.cache_rules(&src, id);
+                self.cached_rules(&src, id).unwrap()
+            }
+        };
         let mut states = HashMap::new();
 
         // we iterate over each because we don't want exclude rules from filter
