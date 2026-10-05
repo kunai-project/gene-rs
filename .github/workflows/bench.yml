@@ -25,18 +25,24 @@ concurrency:
 
 jobs:
   bench:
+    # fork-only: never run if this file ends up in another repository
+    if: github.repository == 'zbalkan/gene-rs'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
       # one criterion directory shared by both runs so --baseline finds the saved data
       CRITERION_HOME: ${{ github.workspace }}/criterion
-      HEAD_REF: ${{ inputs.head || github.head_ref }}
+      # pull requests are benchmarked at their exact head commit, which may
+      # live in another fork; manual runs use a branch of this repository
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      HEAD_REF: ${{ github.event.pull_request.head.sha || inputs.head }}
       BASE_REF: ${{ inputs.base || github.base_ref }}
     steps:
       - name: Checkout head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          repository: ${{ env.HEAD_REPO }}
           ref: ${{ env.HEAD_REF }}
           path: head
           persist-credentials: false
