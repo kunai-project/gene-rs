@@ -42,6 +42,16 @@ cargo add gene
 cargo add gene_derive
 ```
 
+### Optional Features
+
+| Feature | Description |
+|---------|-------------|
+| `uuid`  | Implements [`FieldGetter`](https://docs.rs/gene/latest/gene/event/trait.FieldGetter.html) for [`uuid::Uuid`](https://docs.rs/uuid/latest/uuid/struct.Uuid.html), exposed as a hyphenated string |
+
+```bash
+cargo add gene --features uuid
+```
+
 ## Quickstart
 
 ```rust
