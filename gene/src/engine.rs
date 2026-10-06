@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     compiler,
     rules::{self, bound_severity, CompiledRule, Decision},
-    Compiler, Event, FieldValue, FieldNameIterator
+    Compiler, Event, FieldNameIterator, FieldValue,
 };
 
 use crate::FieldGetter;
@@ -558,9 +558,9 @@ pub struct Engine {
     // all the rules in the engine
     rules: Vec<CompiledRule>,
     // cache the list of rules indexes to match a given (source, id)
-    // key: (source, event_id)
+    // key: (source, event_id)
     // value: vector of rule indexes
-    rules_cache: HashMap<(String, i64), RuleCacheEntry>,
+    rules_cache: HashMap<(Cow<'static, str>, i64), RuleCacheEntry>,
     // cache rules dependencies
     // key: rule index
     // value: vector of dependency indexes
@@ -608,45 +608,42 @@ impl Engine {
         self.rules_cache.clear();
     }
 
+    /// Must only be called on a cache miss: always rebuilds and overwrites the entry.
     #[inline(always)]
-    fn cache_rules(&mut self, src: String, id: i64) {
-        let key = (src, id);
+    fn cache_rules(&mut self, src: &str, id: i64) {
         let mut tmp_filters = BTreeMap::new();
         let mut tmp_detections = BTreeMap::new();
 
-        if !self.rules_cache.contains_key(&key) {
-            for (i, r) in self
-                .rules
-                .iter()
-                // !!! do not enumerate after a filter otherwise indexes will
-                // not be the good ones
-                .enumerate()
-                // we take only filter and detection rules
-                .filter(|(_, r)| r.is_filter() || r.is_detection())
-                // we take only rules that can match on that kind of event
-                .filter(|(_, r)| r.can_match_on(&key.0, id))
-            {
-                if r.is_filter() {
-                    tmp_filters.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
-                } else if r.is_detection() {
-                    tmp_detections.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
-                }
+        for (i, r) in self
+            .rules
+            .iter()
+            // !!! do not enumerate after a filter otherwise indexes will
+            // not be the good ones
+            .enumerate()
+            // we take only filter and detection rules
+            .filter(|(_, r)| r.is_filter() || r.is_detection())
+            // we take only rules that can match on that kind of event
+            .filter(|(_, r)| r.can_match_on(src, id))
+        {
+            if r.is_filter() {
+                tmp_filters.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
+            } else if r.is_detection() {
+                tmp_detections.insert(((r.decision, r.severity), Cow::from(&r.name)), i);
             }
-
-            self.rules_cache.insert(
-                key,
-                RuleCacheEntry {
-                    filters: tmp_filters.values().rev().cloned().collect(),
-                    detections: tmp_detections.values().rev().cloned().collect(),
-                },
-            );
         }
+
+        let entry = RuleCacheEntry {
+            filters: tmp_filters.values().rev().cloned().collect(),
+            detections: tmp_detections.values().rev().cloned().collect(),
+        };
+
+        self.rules_cache
+            .insert((Cow::Owned(src.to_owned()), id), entry);
     }
 
     #[inline(always)]
-    fn cached_rules(&self, src: String, id: i64) -> Option<&RuleCacheEntry> {
-        let key = (src, id);
-        self.rules_cache.get(&key)
+    fn cached_rules<'a>(&'a self, src: &'a str, id: i64) -> Option<&'a RuleCacheEntry> {
+        self.rules_cache.get(&(Cow::Borrowed(src), id))
     }
 
     /// Returns the `Vec` of [CompiledRule] currently loaded in the engine
@@ -680,11 +677,14 @@ impl Engine {
         ) {
             for req_name in eng.rules[rule_idx].depends.iter() {
                 if let Some(&dep) = eng.names.get(req_name) {
-                    rule_dep_search_rec(eng, dep, dfs, mark);
-                    if !mark.contains(&dep) {
-                        dfs.push(dep);
-                        mark.insert(dep);
+                    // rules graph is a DAG (enforced by the compiler) so a
+                    // marked node has its whole sub-graph already pushed
+                    if mark.contains(&dep) {
+                        continue;
                     }
+                    rule_dep_search_rec(eng, dep, dfs, mark);
+                    dfs.push(dep);
+                    mark.insert(dep);
                 }
             }
         }
@@ -709,8 +709,15 @@ impl Engine {
         let src = event.source();
         let id = event.id();
 
-        self.cache_rules(src.clone().into(), id);
-        let cached_rules = self.cached_rules(src.into(), id).unwrap();
+        // a cache hit costs a single lookup, the cache is filled on miss only
+        let cached_rules = match self.cached_rules(&src, id) {
+            Some(cached) => cached,
+            None => {
+                self.cache_rules(&src, id);
+                self.cached_rules(&src, id)
+                    .expect("cache_rules always inserts an entry for (source, id)")
+            }
+        };
         let mut states = HashMap::new();
 
         // we iterate over each because we don't want exclude rules from filter
@@ -1190,6 +1197,96 @@ condition: all of them
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn test_diamond_deps() {
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+name: base
+type: dependency
+matches:
+    $ip: .ip == '8.8.4.4'
+condition: any of them
+
+---
+
+name: left
+type: dependency
+matches:
+    $b: rule(base)
+condition: all of them
+
+---
+
+name: right
+type: dependency
+matches:
+    $b: rule(base)
+condition: all of them
+
+---
+
+name: top
+matches:
+    $l: rule(left)
+    $r: rule(right)
+condition: all of them
+"#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        let idx = |name: &str| *e.names.get(name).unwrap();
+        let deps = e.deps_cache.get(&idx("top")).unwrap();
+
+        assert_eq!(deps.len(), 3);
+        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
+        assert_eq!(deps[0], idx("base"));
+
+        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
+        assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
+
+        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
+        assert!(!e.scan(&Dummy2 {}).unwrap().includes_detection("top"));
+    }
+
+    #[test]
+    fn test_deep_diamond_deps() {
+        // ladder of diamonds: dependency resolution used to revisit shared
+        // sub-graphs, making engine construction exponential in depth
+        const DEPTH: usize = 64;
+
+        let mut rules = String::from(
+            "name: l0\ntype: dependency\nmatches:\n  $ip: .ip == '8.8.4.4'\ncondition: $ip\n",
+        );
+        for k in 1..=DEPTH {
+            for side in ["a", "b"] {
+                rules.push_str(&format!(
+                    "---\nname: {side}{k}\ntype: dependency\nmatches:\n  $r: rule(l{})\ncondition: $r\n",
+                    k - 1
+                ));
+            }
+            rules.push_str(&format!(
+                "---\nname: l{k}\ntype: dependency\nmatches:\n  $x: rule(a{k})\n  $y: rule(b{k})\ncondition: $x and $y\n"
+            ));
+        }
+        rules.push_str(&format!(
+            "---\nname: top\nmatches:\n  $l: rule(l{DEPTH})\ncondition: $l\n"
+        ));
+
+        let mut c = Compiler::new();
+        c.load_rules_from_str(rules).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
+        let deps = e.deps_cache.get(e.names.get("top").unwrap()).unwrap();
+        assert_eq!(deps.len(), 3 * DEPTH + 1);
+        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
+
+        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
+        assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
     }
 
     #[test]
