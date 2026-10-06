@@ -575,7 +575,7 @@ pub(crate) struct ScanContext<'a, E> {
     rules: &'a [CompiledRule],
     names: &'a HashMap<String, usize>,
     event: &'a E,
-    states: HashMap<&'a str, DepState>,
+    states: HashMap<usize, DepState>,
     first_err: Option<rules::Error>,
 }
 
@@ -596,24 +596,24 @@ where
         }
 
         // check if rule was already evaluated
-        match self.states.get(r.name.as_str()) {
+        match self.states.get(&idx) {
             Some(DepState::Match(ok)) => return Ok(*ok),
             Some(DepState::Error) => return Err(matcher::Error::dependency_failed(&r.name)),
             None => {}
         }
 
         if !r.can_match_on(self.event.source(), self.event.id()) {
-            self.states.insert(&r.name, DepState::Match(false));
+            self.states.insert(idx, DepState::Match(false));
             return Ok(false);
         }
 
         match r.match_event(self.event, Some(self)) {
             Ok(ok) => {
-                self.states.insert(&r.name, DepState::Match(ok));
+                self.states.insert(idx, DepState::Match(ok));
                 Ok(ok)
             }
             Err(e) => {
-                self.states.insert(&r.name, DepState::Error);
+                self.states.insert(idx, DepState::Error);
                 // keep the first error, later ones may only wrap a failed dependency
                 self.first_err.get_or_insert(e);
                 Err(matcher::Error::dependency_failed(&r.name))
