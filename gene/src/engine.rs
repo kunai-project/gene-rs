@@ -576,7 +576,7 @@ pub(crate) struct ScanContext<'a, E> {
     names: &'a HashMap<String, usize>,
     event: &'a E,
     states: HashMap<&'a str, DepState>,
-    last_err: Option<rules::Error>,
+    first_err: Option<rules::Error>,
 }
 
 impl<'a, E> ScanContext<'a, E>
@@ -590,7 +590,7 @@ where
         // not a dependency -> evaluate rule
         if !r.is_dep {
             return r.match_event(self.event, Some(self)).map_err(|e| {
-                self.last_err.get_or_insert(e);
+                self.first_err.get_or_insert(e);
                 matcher::Error::dependency_failed(&r.name)
             });
         }
@@ -615,7 +615,7 @@ where
             Err(e) => {
                 self.states.insert(&r.name, DepState::Error);
                 // keep the first error, later ones may only wrap a failed dependency
-                self.last_err.get_or_insert(e);
+                self.first_err.get_or_insert(e);
                 Err(matcher::Error::dependency_failed(&r.name))
             }
         }
@@ -727,6 +727,9 @@ impl Engine {
     /// Dependencies (`rule(name)` matches) are evaluated lazily, only when a
     /// condition reaches them, and at most once per event. Consequently, an
     /// error in a dependency the condition never reaches is not reported.
+    ///
+    /// When several rules fail, only the first error is returned, as later
+    /// ones may only report a failed dependency rather than the root cause.
     pub fn scan<E>(
         &mut self,
         event: &E,
@@ -753,7 +756,7 @@ impl Engine {
             names: &self.names,
             event,
             states: HashMap::new(),
-            last_err: None,
+            first_err: None,
         };
 
         // we iterate over each because we don't want exclude rules from filter
@@ -763,7 +766,7 @@ impl Engine {
                 let r = &self.rules[i];
                 // NB: a rule may also be a dependency, so it goes through the
                 // memoizing scan context; can_match_on was already checked by cache_rules
-                // and errors are recorded in last_err
+                // and errors are recorded in first_err
                 let ok = ctx.match_rule_at(i).unwrap_or(false);
 
                 // we process scan result
@@ -778,7 +781,7 @@ impl Engine {
             }
         }
 
-        if let Some(err) = ctx.last_err {
+        if let Some(err) = ctx.first_err {
             return Err((sr, err).into());
         }
 
