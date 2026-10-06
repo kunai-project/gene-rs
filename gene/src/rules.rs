@@ -613,21 +613,8 @@ impl TryFrom<Rule> for CompiledRule {
 }
 
 impl CompiledRule {
-    // keep this function not to break tests
-    #[allow(dead_code)]
     #[inline(always)]
-    fn match_event<E>(&self, event: &E) -> Result<bool, Error>
-    where
-        E: for<'e> Event<'e>,
-    {
-        self.condition
-            .compute_for_event(event, &self.matches, None)
-            .map_err(|e| Box::new(e).into())
-            .map_err(|e: Error| e.wrap(self.name.clone()))
-    }
-
-    #[inline(always)]
-    pub(crate) fn match_event_with_ctx<E>(
+    pub(crate) fn match_event<E>(
         &self,
         event: &E,
         ctx: Option<&mut ScanContext<'_, E>>,
@@ -828,7 +815,7 @@ condition: $a and $b and $c and $d and $e and $f and $g and $h and $i and not $k
             (".data.exe.perm", "0x10040")
         );
 
-        assert!(cr.match_event(&(LsEvent {})).unwrap());
+        assert!(cr.match_event(&(LsEvent {}), None).unwrap());
     }
 
     #[test]
@@ -846,7 +833,7 @@ condition: $b
 
         // we need to put something that cannot be transformed to a Number
         fake_event!(Dummy, (".data.exe.size", "42*3"));
-        assert!(cr.match_event(&(Dummy {})).is_err_and(|e| {
+        assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
             matches!(e.wrapped(), Error::Condition(_))
         }));
@@ -866,7 +853,7 @@ condition: $b
         let cr = CompiledRule::try_from(d).unwrap();
 
         fake_event!(Dummy, (".data.exe.size", "43"));
-        assert!(cr.match_event(&(Dummy {})).is_err_and(|e| {
+        assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
             matches!(e.wrapped(), Error::Condition(_))
         }));
@@ -886,7 +873,7 @@ condition: $c
         let cr = CompiledRule::try_from(d).unwrap();
 
         fake_event!(Dummy, (".data.exe.size", "43"));
-        assert!(cr.match_event(&(Dummy {})).is_err_and(|e| {
+        assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
             matches!(e.wrapped(), Error::Condition(_))
         }));
@@ -904,7 +891,7 @@ name: test
 
         fake_event!(Dummy, (".data.exe.size", "43"));
 
-        assert!(cr.match_event(&(Dummy {})).unwrap());
+        assert!(cr.match_event(&(Dummy {}), None).unwrap());
     }
 
     #[test]
@@ -933,7 +920,8 @@ condition: $a
             .match_event(
                 &(Dummy {
                     path: PathBuf::from("/some/path")
-                })
+                }),
+                None
             )
             .unwrap());
     }
@@ -966,7 +954,8 @@ condition: $a and $b
             .match_event(
                 &(Dummy {
                     ip: "8.8.4.4".parse().unwrap(),
-                })
+                }),
+                None
             )
             .unwrap());
     }
@@ -1019,7 +1008,7 @@ condition: all of them
             ip: "8.8.4.4".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]
@@ -1047,7 +1036,7 @@ condition: all of $ip
             ip: "8.8.4.4".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]
@@ -1074,7 +1063,7 @@ condition: any of them
             ip: "8.8.42.42".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]
@@ -1106,7 +1095,7 @@ condition: any of $ip
                 ip: ip.parse().unwrap(),
             };
 
-            assert_eq!(cr.match_event(&event), Ok(expect));
+            assert_eq!(cr.match_event(&event, None), Ok(expect));
         }
     }
 
@@ -1137,7 +1126,7 @@ condition: 2 of them
             ip: "42.42.42.42".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]
@@ -1168,14 +1157,14 @@ condition: 1 of $path or 1 of $ip
             ip: "42.42.42.42".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
 
         let event = Dummy {
             path: "/bin/true".into(),
             ip: "8.8.4.4".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]
@@ -1202,7 +1191,7 @@ condition: none of them
             ip: "42.42.42.42".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]
@@ -1229,7 +1218,7 @@ condition: none of $ip
             ip: "42.42.42.42".parse().unwrap(),
         };
 
-        assert_eq!(cr.match_event(&event), Ok(true));
+        assert_eq!(cr.match_event(&event, None), Ok(true));
     }
 
     #[test]

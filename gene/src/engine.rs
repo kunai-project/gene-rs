@@ -589,7 +589,7 @@ where
 
         // not a dependency -> evaluate rule
         if !r.is_dep {
-            return r.match_event_with_ctx(self.event, Some(self)).map_err(|e| {
+            return r.match_event(self.event, Some(self)).map_err(|e| {
                 self.last_err.get_or_insert(e);
                 matcher::Error::dependency_failed(&r.name)
             });
@@ -607,7 +607,7 @@ where
             return Ok(false);
         }
 
-        match r.match_event_with_ctx(self.event, Some(self)) {
+        match r.match_event(self.event, Some(self)) {
             Ok(ok) => {
                 self.states.insert(&r.name, DepState::Match(ok));
                 Ok(ok)
