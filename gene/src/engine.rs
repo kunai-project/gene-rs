@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     compiler,
     rules::{self, bound_severity, CompiledRule, Decision},
-    Compiler, Event, FieldValue, FieldNameIterator
+    Compiler, Event, FieldNameIterator, FieldValue,
 };
 
 use crate::FieldGetter;
@@ -558,9 +558,9 @@ pub struct Engine {
     // all the rules in the engine
     rules: Vec<CompiledRule>,
     // cache the list of rules indexes to match a given (source, id)
-    // key: source, then event_id (nested so that lookups borrow &str)
+    // key: (source, event_id)
     // value: vector of rule indexes
-    rules_cache: HashMap<String, HashMap<i64, RuleCacheEntry>>,
+    rules_cache: HashMap<(Cow<'static, str>, i64), RuleCacheEntry>,
     // cache rules dependencies
     // key: rule index
     // value: vector of dependency indexes
@@ -611,11 +611,7 @@ impl Engine {
     #[inline(always)]
     fn cache_rules(&mut self, src: &str, id: i64) {
         // lookup is done with a borrowed &str so that a cache hit never allocates
-        if self
-            .rules_cache
-            .get(src)
-            .is_some_and(|by_id| by_id.contains_key(&id))
-        {
+        if self.rules_cache.contains_key(&(Cow::Borrowed(src), id)) {
             return;
         }
 
@@ -645,20 +641,13 @@ impl Engine {
             detections: tmp_detections.values().rev().cloned().collect(),
         };
 
-        match self.rules_cache.get_mut(src) {
-            Some(by_id) => {
-                by_id.insert(id, entry);
-            }
-            None => {
-                self.rules_cache
-                    .insert(src.to_owned(), HashMap::from([(id, entry)]));
-            }
-        }
+        self.rules_cache
+            .insert((Cow::Owned(src.to_owned()), id), entry);
     }
 
     #[inline(always)]
-    fn cached_rules(&self, src: &str, id: i64) -> Option<&RuleCacheEntry> {
-        self.rules_cache.get(src).and_then(|by_id| by_id.get(&id))
+    fn cached_rules<'a>(&'a self, src: &'a str, id: i64) -> Option<&'a RuleCacheEntry> {
+        self.rules_cache.get(&(Cow::Borrowed(src), id))
     }
 
     /// Returns the `Vec` of [CompiledRule] currently loaded in the engine
