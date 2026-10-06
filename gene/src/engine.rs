@@ -1200,6 +1200,96 @@ condition: all of them
     }
 
     #[test]
+    fn test_diamond_deps() {
+        let mut c = Compiler::new();
+        c.load_rules_from_str(
+            r#"
+name: base
+type: dependency
+matches:
+    $ip: .ip == '8.8.4.4'
+condition: any of them
+
+---
+
+name: left
+type: dependency
+matches:
+    $b: rule(base)
+condition: all of them
+
+---
+
+name: right
+type: dependency
+matches:
+    $b: rule(base)
+condition: all of them
+
+---
+
+name: top
+matches:
+    $l: rule(left)
+    $r: rule(right)
+condition: all of them
+"#,
+        )
+        .unwrap();
+
+        let mut e = Engine::try_from(c).unwrap();
+
+        let idx = |name: &str| *e.names.get(name).unwrap();
+        let deps = e.deps_cache.get(&idx("top")).unwrap();
+
+        assert_eq!(deps.len(), 3);
+        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
+        assert_eq!(deps[0], idx("base"));
+
+        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
+        assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
+
+        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
+        assert!(!e.scan(&Dummy2 {}).unwrap().includes_detection("top"));
+    }
+
+    #[test]
+    fn test_deep_diamond_deps() {
+        // ladder of diamonds: dependency resolution used to revisit shared
+        // sub-graphs, making engine construction exponential in depth
+        const DEPTH: usize = 64;
+
+        let mut rules = String::from(
+            "name: l0\ntype: dependency\nmatches:\n  $ip: .ip == '8.8.4.4'\ncondition: $ip\n",
+        );
+        for k in 1..=DEPTH {
+            for side in ["a", "b"] {
+                rules.push_str(&format!(
+                    "---\nname: {side}{k}\ntype: dependency\nmatches:\n  $r: rule(l{})\ncondition: $r\n",
+                    k - 1
+                ));
+            }
+            rules.push_str(&format!(
+                "---\nname: l{k}\ntype: dependency\nmatches:\n  $x: rule(a{k})\n  $y: rule(b{k})\ncondition: $x and $y\n"
+            ));
+        }
+        rules.push_str(&format!(
+            "---\nname: top\nmatches:\n  $l: rule(l{DEPTH})\ncondition: $l\n"
+        ));
+
+        let mut c = Compiler::new();
+        c.load_rules_from_str(rules).unwrap();
+        let mut e = Engine::try_from(c).unwrap();
+
+        let deps = e.deps_cache.get(e.names.get("top").unwrap()).unwrap();
+        assert_eq!(deps.len(), 3 * DEPTH + 1);
+        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
+
+        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
+        assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
+    }
+
+    #[test]
     fn test_compiled_rules() {
         let mut c = Compiler::new();
         c.load_rules_from_str(
