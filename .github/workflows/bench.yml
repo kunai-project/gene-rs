@@ -1,0 +1,127 @@
+# Temporary workflow: compares the criterion benchmarks of the original
+# upstream code, this branch before the maintainer's cache refactor, and this
+# branch after it, on one runner. To be deleted before merge.
+name: Benchmarks
+
+on:
+  push:
+    branches: [performance-improvements]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    # never run if this file ends up in another repository
+    if: github.repository == 'zbalkan/gene-rs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      # one criterion directory shared by all checkouts so baselines can be compared
+      CRITERION_HOME: ${{ github.workspace }}/criterion
+      # upstream commit the PR is based on
+      ORIGINAL_SHA: 47d6c0f7b72723d3e87456aaabb368ffc2d95d14
+      # PR branch before the maintainer's commit cc12133
+      BEFORE_SHA: e2edf6406c40fcc36b897e251c9ac52277737aa0
+    steps:
+      - name: Checkout after (this commit)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: after
+          persist-credentials: false
+
+      - name: Checkout before
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.BEFORE_SHA }}
+          path: before
+          persist-credentials: false
+
+      - name: Checkout original
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: kunai-project/gene-rs
+          ref: ${{ env.ORIGINAL_SHA }}
+          path: original
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+
+      - name: Use the same benchmark harness in every checkout
+        # the original code lacks the engine-build group
+        run: |
+          for v in before original; do
+            cp after/gene/benches/engine_benchmark.rs "$v/gene/benches/engine_benchmark.rs"
+          done
+
+      # Separate target dirs are required: cargo hashes workspace members by
+      # their path relative to the workspace root, so a shared target dir lets
+      # one checkout silently reuse binaries built from another.
+      - name: Build all checkouts
+        run: |
+          for v in original before after; do
+            (cd "$v" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$v" \
+              cargo bench -p gene --bench engine_benchmark --no-run)
+          done
+
+      # Round 2 runs in reverse order so that drift on the runner does not
+      # systematically favour the version measured last.
+      - name: Benchmark, two rounds in opposite order
+        run: |
+          set -o pipefail
+          run() {
+            (cd "$1" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$1" \
+              cargo bench -p gene --bench engine_benchmark -- --save-baseline "$1-$2" --noplot \
+              | tee "$RUNNER_TEMP/$1-$2.txt")
+          }
+          for v in original before after; do run "$v" 1; done
+          for v in after before original; do run "$v" 2; done
+
+      # Comparisons load the samples saved above instead of measuring again.
+      - name: Compare saved measurements
+        run: |
+          set -o pipefail
+          compare() {
+            (cd after && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-after" \
+              cargo bench -p gene --bench engine_benchmark -- \
+                --load-baseline "$1" --baseline "$2" --noplot \
+              | tee "$RUNNER_TEMP/cmp-$1-vs-$2.txt")
+          }
+          for r in 1 2; do
+            compare "before-$r" "original-$r"
+            compare "after-$r" "original-$r"
+            compare "after-$r" "before-$r"
+          done
+
+      - name: Job summary
+        run: |
+          {
+            echo "## Criterion: original \`${ORIGINAL_SHA::7}\` vs before \`${BEFORE_SHA::7}\` vs after \`${GITHUB_SHA::7}\`"
+            for r in 1 2; do
+              for pair in "before-$r original-$r" "after-$r original-$r" "after-$r before-$r"; do
+                set -- $pair
+                echo
+                echo "### Round $r: ${1%-*} compared with ${2%-*}"
+                echo '```text'
+                grep -E '^[a-z-]+/|change:|time:|Performance|No change|within noise' \
+                  "$RUNNER_TEMP/cmp-$1-vs-$2.txt" || true
+                echo '```'
+              done
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload criterion data
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: criterion-${{ github.run_id }}
+          path: |
+            criterion
+            ${{ runner.temp }}/*.txt
+          retention-days: 14
