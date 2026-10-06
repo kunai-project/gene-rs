@@ -448,6 +448,7 @@ impl Rule {
                 decision: self.decision.unwrap_or_default(),
                 depends: HashSet::new(),
                 is_dep: false,
+                max_depth: 0,
                 tags: HashSet::new(),
                 attack: HashSet::new(),
                 include_events: Self::build_include_events(&filters),
@@ -545,6 +546,7 @@ pub struct CompiledRule {
     pub(crate) severity: u8,
     pub(crate) actions: HashSet<String>,
     pub(crate) is_dep: bool,
+    pub(crate) max_depth: usize,
 }
 
 /// Error types that can occur during rule processing and compilation.

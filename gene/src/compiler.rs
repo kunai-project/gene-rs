@@ -11,12 +11,17 @@ use crate::{
     template, Rule, Templates,
 };
 
+/// Maximum length of a `rule(name)` dependency chain accepted by the [`Compiler`]
+pub const MAX_DEPENDENCY_DEPTH: usize = 64;
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("duplicate rule={0}")]
     DuplicateRule(String),
     #[error("unknown rule dependency in rule={0}")]
     UnknownRuleDependency(String),
+    #[error("rule dependency chain deeper than {MAX_DEPENDENCY_DEPTH} in rule={0}")]
+    DependencyTooDeep(String),
     #[error("rule error: {0}")]
     Rule(#[from] rules::Error),
     #[error("template: error {0}")]
@@ -120,15 +125,22 @@ impl Compiler {
                 continue;
             }
 
-            let compiled: CompiledRule = r.clone().try_into()?;
+            let mut compiled: CompiledRule = r.clone().try_into()?;
 
             // We verify that all rules we depend on are known.
             // The fact that rule dependencies must be known makes
             // circular references impossible
             for dep in compiled.depends.iter() {
-                self.names
+                let &d = self
+                    .names
                     .get(dep)
                     .ok_or(Error::UnknownRuleDependency(dep.clone()))?;
+                compiled.max_depth = compiled.max_depth.max(self.compiled[d].max_depth + 1);
+            }
+
+            // dependencies are evaluated recursively at scan time
+            if compiled.max_depth > MAX_DEPENDENCY_DEPTH {
+                return Err(Error::DependencyTooDeep(compiled.name));
             }
 
             // we need to be sure nothing can fail beyond this point not
@@ -220,6 +232,29 @@ condition: any of them
 
         // Unknown RuleDependency is checked at compile time
         assert!(matches!(c.compile(), Err(Error::UnknownRuleDependency(_))));
+    }
+
+    #[test]
+    fn test_dependency_too_deep() {
+        let chain = |n: usize| {
+            let mut s = String::from("---\nname: r0\n");
+            for i in 1..=n {
+                s.push_str(&format!(
+                    "---\nname: r{i}\nmatches:\n  $d: rule(r{})\ncondition: $d\n",
+                    i - 1
+                ));
+            }
+            s
+        };
+
+        let mut c = Compiler::new();
+        c.load_rules_from_str(chain(MAX_DEPENDENCY_DEPTH)).unwrap();
+        c.compile().unwrap();
+
+        let mut c = Compiler::new();
+        c.load_rules_from_str(chain(MAX_DEPENDENCY_DEPTH + 1))
+            .unwrap();
+        assert!(matches!(c.compile(), Err(Error::DependencyTooDeep(_))));
     }
 
     #[test]

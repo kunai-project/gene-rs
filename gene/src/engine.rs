@@ -1350,7 +1350,7 @@ condition: $dep and $u
     fn test_deep_diamond_deps() {
         // ladder of diamonds: without memoization, scanning would revisit
         // shared sub-graphs exponentially in depth
-        const DEPTH: usize = 64;
+        const DEPTH: usize = 31;
 
         let mut rules = String::from(
             "name: l0\ntype: dependency\nmatches:\n  $ip: .ip == '8.8.4.4'\ncondition: $ip\n",
