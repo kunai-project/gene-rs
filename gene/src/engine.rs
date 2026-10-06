@@ -1147,112 +1147,206 @@ name: match.all
 
         fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
         let sr = e.scan(&Dummy2 {}).unwrap();
-        assert!(!sr.includes_detection("depends"));
+        assert!(!sr.includes_detection("main"));
         assert!(!sr.includes_detection("dep.rule"));
         assert!(sr.includes_detection("match.all"));
     }
 
-    #[test]
-    fn test_dep_cache() {
+    /// Event recording every field access
+    struct Recorder {
+        fields: HashMap<&'static str, &'static str>,
+        accesses: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Recorder {
+        fn new(fields: &[(&'static str, &'static str)]) -> Self {
+            Self {
+                fields: fields.iter().copied().collect(),
+                accesses: Default::default(),
+            }
+        }
+
+        fn count(&self, path: &str) -> usize {
+            self.accesses.borrow().iter().filter(|p| *p == path).count()
+        }
+    }
+
+    impl<'f> FieldGetter<'f> for Recorder {
+        fn get_from_iter(&'f self, _: FieldNameIterator<'_>) -> Option<FieldValue<'f>> {
+            unimplemented!()
+        }
+
+        fn get_from_path(&self, path: &crate::XPath) -> Option<FieldValue<'_>> {
+            let path = path.to_string_lossy().to_string();
+            let v = self.fields.get(path.as_str()).map(|&v| v.into());
+            self.accesses.borrow_mut().push(path);
+            v
+        }
+    }
+
+    impl<'e> Event<'e> for Recorder {
+        fn id(&self) -> i64 {
+            1
+        }
+
+        fn source(&self) -> std::borrow::Cow<'_, str> {
+            "test".into()
+        }
+    }
+
+    fn engine(rules: &str) -> Engine {
         let mut c = Compiler::new();
-        c.load_rules_from_str(
-            r#"
-name: dep.rule
+        c.load_rules_from_str(rules).unwrap();
+        Engine::try_from(c).unwrap()
+    }
+
+    const DEP_TARGET: &str = r#"
+name: dep.target
 type: dependency
 matches:
-    $ip: .ip == '8.8.4.4'
-condition: any of them
+    $t: .target ~= '^/etc/'
+condition: $t
+"#;
 
+    #[test]
+    fn test_lazy_dep_not_reached() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
 ---
-
-name: main
+name: susp.filemod.cli
 matches:
-    $dep1: rule(dep.rule)
-condition: all of them
+    $cmd: .cmd ~= '(chmod|chattr)'
+    $dep: rule(dep.target)
+condition: $cmd && $dep
+"#
+        ));
 
----
+        let ev = Recorder::new(&[(".cmd", "ls"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.includes_detection("susp.filemod.cli"));
+        assert_eq!(*ev.accesses.borrow(), vec![".cmd".to_string()]);
 
-name: multi.deps
-matches:
-    $dep1: rule(dep.rule)
-    $dep2: rule(main)
-    $dep3: rule(dep.rule)
-    $dep4: rule(dep.rule)
-condition: all of them
-"#,
-        )
-        .unwrap();
-
-        let e = Engine::try_from(c).unwrap();
-
-        // we check the dep cache is correct
-        assert_eq!(
-            e.deps_cache
-                .get(e.names.get("multi.deps").unwrap())
-                .unwrap()
-                .len(),
-            2
-        );
+        let ev = Recorder::new(&[(".cmd", "chmod"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("susp.filemod.cli"));
+        assert_eq!(*ev.accesses.borrow(), vec![".cmd", ".target"]);
     }
 
     #[test]
-    fn test_diamond_deps() {
-        let mut c = Compiler::new();
-        c.load_rules_from_str(
-            r#"
-name: base
+    fn test_lazy_dep_shared() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
+---
+name: first
+matches:
+    $dep: rule(dep.target)
+condition: $dep
+---
+name: second
+matches:
+    $dep: rule(dep.target)
+    $first: rule(first)
+condition: $dep and $first
+"#
+        ));
+
+        let ev = Recorder::new(&[(".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("first"));
+        assert!(sr.includes_detection("second"));
+        assert_eq!(ev.count(".target"), 1);
+    }
+
+    #[test]
+    fn test_lazy_dep_nested() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
+---
+name: dep.mid
 type: dependency
 matches:
-    $ip: .ip == '8.8.4.4'
-condition: any of them
-
+    $d: rule(dep.target)
+    $u: .user == 'root'
+condition: $u and $d
 ---
-
-name: left
-type: dependency
-matches:
-    $b: rule(base)
-condition: all of them
-
----
-
-name: right
-type: dependency
-matches:
-    $b: rule(base)
-condition: all of them
-
----
-
 name: top
 matches:
-    $l: rule(left)
-    $r: rule(right)
-condition: all of them
+    $d: rule(dep.mid)
+condition: $d
+"#
+        ));
+
+        let ev = Recorder::new(&[(".user", "root"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("top"));
+        assert_eq!(*ev.accesses.borrow(), vec![".user", ".target"]);
+
+        let ev = Recorder::new(&[(".user", "bob"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.includes_detection("top"));
+        assert_eq!(*ev.accesses.borrow(), vec![".user"]);
+    }
+
+    #[test]
+    fn test_lazy_dep_error() {
+        let mut e = engine(
+            r#"
+name: dep.err
+type: dependency
+matches:
+    $m: .missing == 'x'
+condition: $m
+---
+name: rule
+matches:
+    $cmd: .cmd == 'chmod'
+    $dep: rule(dep.err)
+condition: $cmd && !$dep
 "#,
-        )
-        .unwrap();
+        );
 
-        let mut e = Engine::try_from(c).unwrap();
+        // the errored dependency is never reached so no error is reported
+        let ev = Recorder::new(&[(".cmd", "ls")]);
+        assert!(e.scan(&ev).is_ok());
 
-        let idx = |name: &str| *e.names.get(name).unwrap();
-        let deps = e.deps_cache.get(&idx("top")).unwrap();
+        // the error is reported and a negated failed dependency does not match
+        let ev = Recorder::new(&[(".cmd", "chmod")]);
+        let err = e.scan(&ev).unwrap_err();
+        assert!(!err.0.includes_detection("rule"));
+        assert!(err.1.to_string().contains(".missing"), "{}", err.1);
+        assert_eq!(ev.count(".missing"), 1);
+    }
 
-        assert_eq!(deps.len(), 3);
-        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
-        assert_eq!(deps[0], idx("base"));
+    #[test]
+    fn test_lazy_dep_exclude() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
+---
+name: excl
+decision: exclude
+matches:
+    $dep: rule(dep.target)
+condition: $dep
+---
+name: incl
+matches:
+    $dep: rule(dep.target)
+    $u: .user == 'root'
+condition: $dep and $u
+"#
+        ));
 
-        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
-
-        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
-        assert!(!e.scan(&Dummy2 {}).unwrap().includes_detection("top"));
+        let ev = Recorder::new(&[(".user", "root"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.detection_decision().is_include());
+        assert!(!sr.includes_detection("incl"));
+        assert_eq!(*ev.accesses.borrow(), vec![".target"]);
     }
 
     #[test]
     fn test_deep_diamond_deps() {
-        // ladder of diamonds: dependency resolution used to revisit shared
-        // sub-graphs, making engine construction exponential in depth
+        // ladder of diamonds: without memoization, scanning would revisit
+        // shared sub-graphs exponentially in depth
         const DEPTH: usize = 64;
 
         let mut rules = String::from(
@@ -1277,12 +1371,11 @@ condition: all of them
         c.load_rules_from_str(rules).unwrap();
         let mut e = Engine::try_from(c).unwrap();
 
-        let deps = e.deps_cache.get(e.names.get("top").unwrap()).unwrap();
-        assert_eq!(deps.len(), 3 * DEPTH + 1);
-        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
-
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
+
+        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
+        assert!(!e.scan(&Dummy2 {}).unwrap().includes_detection("top"));
     }
 
     #[test]
@@ -1360,7 +1453,7 @@ name: match.all
 
         fake_event!(Dummy2, id = 2, source = "test", (".ip", "8.8.8.8"));
         let sr = e.scan(&Dummy2 {}).unwrap();
-        assert!(!sr.includes_detection("depends"));
+        assert!(!sr.includes_detection("main"));
         assert!(!sr.includes_detection("dep.rule"));
         assert!(sr.includes_detection("match.all"));
     }
