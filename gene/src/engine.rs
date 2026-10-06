@@ -608,13 +608,9 @@ impl Engine {
         self.rules_cache.clear();
     }
 
+    /// Must only be called on a cache miss: always rebuilds and overwrites the entry.
     #[inline(always)]
     fn cache_rules(&mut self, src: &str, id: i64) {
-        // lookup is done with a borrowed &str so that a cache hit never allocates
-        if self.rules_cache.contains_key(&(Cow::Borrowed(src), id)) {
-            return;
-        }
-
         let mut tmp_filters = BTreeMap::new();
         let mut tmp_detections = BTreeMap::new();
 
