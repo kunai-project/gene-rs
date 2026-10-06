@@ -18,13 +18,12 @@
 //! - [`enum@Error`]: Rule compilation and processing errors
 
 use self::{attack::AttackId, condition::Condition, matcher::Match};
-use crate::{map::deserialize_uk_hashmap, template::Templates, Event};
+use crate::{engine::ScanContext, map::deserialize_uk_hashmap, template::Templates, Event};
 
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     collections::{HashMap, HashSet},
     io,
     str::FromStr,
@@ -448,6 +447,7 @@ impl Rule {
                 ty: self.ty.unwrap_or_default(),
                 decision: self.decision.unwrap_or_default(),
                 depends: HashSet::new(),
+                is_dep: false,
                 tags: HashSet::new(),
                 attack: HashSet::new(),
                 include_events: Self::build_include_events(&filters),
@@ -544,6 +544,7 @@ pub struct CompiledRule {
     pub(crate) condition: condition::Condition,
     pub(crate) severity: u8,
     pub(crate) actions: HashSet<String>,
+    pub(crate) is_dep: bool,
 }
 
 /// Error types that can occur during rule processing and compilation.
@@ -620,22 +621,22 @@ impl CompiledRule {
         E: for<'e> Event<'e>,
     {
         self.condition
-            .compute_for_event(event, &self.matches, &HashMap::new())
+            .compute_for_event(event, &self.matches, None)
             .map_err(|e| Box::new(e).into())
             .map_err(|e: Error| e.wrap(self.name.clone()))
     }
 
     #[inline(always)]
-    pub(crate) fn match_event_with_states<E>(
+    pub(crate) fn match_event_with_ctx<E>(
         &self,
         event: &E,
-        rules_states: &HashMap<Cow<'_, str>, bool>,
+        ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, Error>
     where
         E: for<'e> Event<'e>,
     {
         self.condition
-            .compute_for_event(event, &self.matches, rules_states)
+            .compute_for_event(event, &self.matches, ctx)
             .map_err(|e| Box::new(e).into())
             .map_err(|e: Error| e.wrap(self.name.clone()))
     }
@@ -718,7 +719,7 @@ mod test {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{Event, FieldGetter, FieldValue, FieldNameIterator};
+    use crate::{Event, FieldGetter, FieldNameIterator, FieldValue};
     use gene_derive::{Event, FieldGetter};
 
     macro_rules! def_event {

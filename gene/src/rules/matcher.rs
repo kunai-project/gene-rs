@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, str::FromStr};
+use std::str::FromStr;
 
 use pest::{
     error::ErrorVariant,
@@ -10,6 +10,7 @@ use regex::Regex;
 use thiserror::Error;
 
 use crate::{
+    engine::ScanContext,
     values::{Number, NumberError},
     Event, FieldValue,
 };
@@ -112,6 +113,8 @@ impl MatchValue {
 pub enum Error {
     #[error("rule={0} not found")]
     RuleNotFound(String),
+    #[error("dependency rule={0} failed")]
+    DependencyFailed(String),
     #[error("field={0} not found")]
     FieldNotFound(String),
     #[error("incompatible types field={path} expect={expect} got={got}")]
@@ -142,8 +145,13 @@ impl Error {
     }
 
     #[inline(always)]
-    fn rule_not_found<S: AsRef<str>>(s: S) -> Self {
+    pub(crate) fn rule_not_found<S: AsRef<str>>(s: S) -> Self {
         Self::RuleNotFound(s.as_ref().into())
+    }
+
+    #[inline(always)]
+    pub(crate) fn dependency_failed<S: AsRef<str>>(s: S) -> Self {
+        Self::DependencyFailed(s.as_ref().into())
     }
 }
 
@@ -196,7 +204,7 @@ impl Match {
     pub(crate) fn match_event<E>(
         &self,
         event: &E,
-        rule_state: &HashMap<Cow<'_, str>, bool>,
+        ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, Error>
     where
         E: for<'e> Event<'e>,
@@ -204,7 +212,7 @@ impl Match {
         match self {
             Self::Direct(m) => m.match_event(event),
             Self::Indirect(m) => m.match_event(event),
-            Self::Rule(m) => m.match_event(rule_state),
+            Self::Rule(m) => m.match_event(ctx),
         }
     }
 }
@@ -526,11 +534,14 @@ impl RuleMatch {
     }
 
     #[inline]
-    pub(crate) fn match_event(&self, states: &HashMap<Cow<'_, str>, bool>) -> Result<bool, Error> {
-        states
-            .get(&Cow::from(&self.0))
-            .copied()
-            .ok_or(Error::rule_not_found(&self.0))
+    pub(crate) fn match_event<E>(&self, ctx: Option<&mut ScanContext<'_, E>>) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
+        match ctx {
+            Some(ctx) => ctx.match_rule(&self.0),
+            None => Err(Error::rule_not_found(&self.0)),
+        }
     }
 
     #[inline(always)]

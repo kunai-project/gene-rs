@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     compiler,
-    rules::{self, bound_severity, CompiledRule, Decision},
+    rules::{self, bound_severity, matcher, CompiledRule, Decision},
     Compiler, Event, FieldNameIterator, FieldValue,
 };
 
@@ -561,10 +561,74 @@ pub struct Engine {
     // key: (source, event_id)
     // value: vector of rule indexes
     rules_cache: HashMap<(Cow<'static, str>, i64), RuleCacheEntry>,
-    // cache rules dependencies
-    // key: rule index
-    // value: vector of dependency indexes
-    deps_cache: HashMap<usize, Vec<usize>>,
+}
+
+#[derive(Clone, Copy)]
+enum DepState {
+    Match(bool),
+    Error,
+}
+
+/// Evaluates rules on demand during a scan, memoizing each result so that a
+/// rule is evaluated at most once per event.
+pub(crate) struct ScanContext<'a, E> {
+    rules: &'a [CompiledRule],
+    names: &'a HashMap<String, usize>,
+    event: &'a E,
+    states: HashMap<&'a str, DepState>,
+    last_err: Option<rules::Error>,
+}
+
+impl<'a, E> ScanContext<'a, E>
+where
+    E: for<'e> Event<'e>,
+{
+    fn match_rule_at(&mut self, idx: usize) -> Result<bool, matcher::Error> {
+        let rules = self.rules;
+        let r = &rules[idx];
+
+        // not a dependency -> evaluate rule
+        if !r.is_dep {
+            return r.match_event_with_ctx(self.event, Some(self)).map_err(|e| {
+                self.last_err.get_or_insert(e);
+                matcher::Error::dependency_failed(&r.name)
+            });
+        }
+
+        // check if rule was already evaluated
+        match self.states.get(r.name.as_str()) {
+            Some(DepState::Match(ok)) => return Ok(*ok),
+            Some(DepState::Error) => return Err(matcher::Error::dependency_failed(&r.name)),
+            None => {}
+        }
+
+        if !r.can_match_on(self.event.source(), self.event.id()) {
+            self.states.insert(&r.name, DepState::Match(false));
+            return Ok(false);
+        }
+
+        match r.match_event_with_ctx(self.event, Some(self)) {
+            Ok(ok) => {
+                self.states.insert(&r.name, DepState::Match(ok));
+                Ok(ok)
+            }
+            Err(e) => {
+                self.states.insert(&r.name, DepState::Error);
+                // keep the first error, later ones may only wrap a failed dependency
+                self.last_err.get_or_insert(e);
+                Err(matcher::Error::dependency_failed(&r.name))
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn match_rule(&mut self, name: &str) -> Result<bool, matcher::Error> {
+        let idx = *self
+            .names
+            .get(name)
+            .ok_or_else(|| matcher::Error::rule_not_found(name))?;
+        self.match_rule_at(idx)
+    }
 }
 
 impl TryFrom<Compiler> for Engine {
@@ -590,19 +654,14 @@ impl Engine {
 
     #[inline(always)]
     pub(crate) fn insert_compiled(&mut self, r: CompiledRule) {
-        let has_deps = !r.depends.is_empty();
-
-        // this is the index the rule is going to be inserted at
-        let rule_idx = self.rules.len();
-        self.names.insert(r.name.clone(), rule_idx);
-        self.rules.push(r);
-
-        // since we know all the dependent rules are there, we can cache
-        // the list of dependencies and we never need to compute it again
-        if has_deps {
-            self.deps_cache
-                .insert(rule_idx, self.dfs_dep_search(rule_idx));
+        // dependencies are always inserted before their dependents
+        for d in r.depends.iter() {
+            if let Some(&i) = self.names.get(d) {
+                self.rules[i].is_dep = true;
+            }
         }
+        self.names.insert(r.name.clone(), self.rules.len());
+        self.rules.push(r);
 
         // cache becomes outdated
         self.rules_cache.clear();
@@ -663,39 +722,11 @@ impl Engine {
         self.rules.is_empty()
     }
 
-    /// Dfs recursive dependency finding
-    /// There is no check for circular references as those are impossible
-    /// due to the fact that a rule cannot depend on a non existing rule.
-    #[inline(always)]
-    fn dfs_dep_search(&self, rule_idx: usize) -> Vec<usize> {
-        // recursive function
-        fn rule_dep_search_rec(
-            eng: &Engine,
-            rule_idx: usize,
-            dfs: &mut Vec<usize>,
-            mark: &mut HashSet<usize>,
-        ) {
-            for req_name in eng.rules[rule_idx].depends.iter() {
-                if let Some(&dep) = eng.names.get(req_name) {
-                    // rules graph is a DAG (enforced by the compiler) so a
-                    // marked node has its whole sub-graph already pushed
-                    if mark.contains(&dep) {
-                        continue;
-                    }
-                    rule_dep_search_rec(eng, dep, dfs, mark);
-                    dfs.push(dep);
-                    mark.insert(dep);
-                }
-            }
-        }
-
-        let mut req = HashSet::new();
-        let mut dfs = Vec::new();
-        rule_dep_search_rec(self, rule_idx, &mut dfs, &mut req);
-        dfs
-    }
-
     /// Scan an [`Event`] with all the rules loaded in the [`Engine`]
+    ///
+    /// Dependencies (`rule(name)` matches) are evaluated lazily, only when a
+    /// condition reaches them, and at most once per event. Consequently, an
+    /// error in a dependency the condition never reaches is not reported.
     pub fn scan<E>(
         &mut self,
         event: &E,
@@ -704,7 +735,6 @@ impl Engine {
         E: for<'e> Event<'e>,
     {
         let mut sr = ScanResult::default_exclude();
-        let mut last_err: Option<rules::Error> = None;
 
         let src = event.source();
         let id = event.id();
@@ -718,57 +748,23 @@ impl Engine {
                     .expect("cache_rules always inserts an entry for (source, id)")
             }
         };
-        let mut states = HashMap::new();
+        let mut ctx = ScanContext {
+            rules: &self.rules,
+            names: &self.names,
+            event,
+            states: HashMap::new(),
+            last_err: None,
+        };
 
         // we iterate over each because we don't want exclude rules from filter
         // exclude to impact detection include and vice versa
         for it in [cached_rules.filters.iter(), cached_rules.detections.iter()] {
-            for i in it {
-                // this is equivalent to an OOB error but this should not happen
-                let r = self.rules.get(*i).unwrap();
-
-                if !r.depends.is_empty() {
-                    debug_assert!(self.deps_cache.contains_key(i));
-                    // there are some dependent rules to match against
-                    if let Some(deps) = self.deps_cache.get(i) {
-                        // we match every dependency of the rule first
-                        for &r_i in deps.iter() {
-                            if let Some(r) = self.rules.get(r_i) {
-                                // we don't need to compute rule again
-                                // NB: rule might be used in several places and already computed
-                                if states.contains_key(&Cow::Borrowed(r.name.as_str())) {
-                                    continue;
-                                }
-
-                                // if the rule cannot match we don't need to go further
-                                if !r.can_match_on(event.source(), id) {
-                                    states.insert(Cow::Borrowed(r.name.as_str()), false);
-                                    continue;
-                                }
-
-                                match r.match_event_with_states(event, &states) {
-                                    Ok(ok) => {
-                                        states.insert(Cow::Borrowed(r.name.as_str()), ok);
-                                    }
-                                    Err(e) => last_err = Some(e),
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // if the rule has already been matched in the process
-                // of dependency matching of whatever rule
-                let ok = match states.get(&Cow::Borrowed(r.name.as_str())) {
-                    Some(&ok) => ok,
-                    None => match r.match_event_with_states(event, &states) {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            last_err = Some(e);
-                            false
-                        }
-                    },
-                };
+            for &i in it {
+                let r = &self.rules[i];
+                // NB: a rule may also be a dependency, so it goes through the
+                // memoizing scan context; can_match_on was already checked by cache_rules
+                // and errors are recorded in last_err
+                let ok = ctx.match_rule_at(i).unwrap_or(false);
 
                 // we process scan result
                 if ok {
@@ -782,7 +778,7 @@ impl Engine {
             }
         }
 
-        if let Some(err) = last_err {
+        if let Some(err) = ctx.last_err {
             return Err((sr, err).into());
         }
 
