@@ -729,7 +729,8 @@ impl Engine {
             Some(cached) => cached,
             None => {
                 self.cache_rules(&src, id);
-                self.cached_rules(&src, id).unwrap()
+                self.cached_rules(&src, id)
+                    .expect("cache_rules always inserts an entry for (source, id)")
             }
         };
         let mut states = HashMap::new();
