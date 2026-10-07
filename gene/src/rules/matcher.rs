@@ -372,7 +372,13 @@ impl MatchValue {
             Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Flag => {
                 let num_str = inner_pair.as_str().trim_matches('\'').trim_matches('"');
                 match inner_pair.as_rule() {
-                    Rule::number | Rule::hex => MatchValue::value_number(num_str),
+                    Rule::number | Rule::hex => match MatchValue::value_number(num_str)? {
+                        // we cannot &= on float
+                        MatchValue::Number(Number::Float(_)) if matches!(op, Op::Flag) => {
+                            Err(ParseError::new("value must be an integer", span))
+                        }
+                        v => Ok(v),
+                    },
                     _ => Err(ParseError::new("value must be a number", span)),
                 }
             }
@@ -523,7 +529,7 @@ impl DirectMatch {
             Op::Flag => {
                 if let (MatchValue::Number(v), FieldValue::Number(o)) = (&(self.value), &fv) {
                     // rule & field == rule
-                    Ok((*v & *o) == *v)
+                    v.checked_bitand(*o).map(|r| r == *v).ok_or(())
                 } else {
                     Err(())
                 }

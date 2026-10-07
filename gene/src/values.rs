@@ -194,6 +194,19 @@ impl std::fmt::Display for Number {
     }
 }
 
+impl Number {
+    /// Bitwise AND, returning `None` unless both numbers are `Int` or both
+    /// are `Uint`.
+    #[inline(always)]
+    pub fn checked_bitand(self, rhs: Self) -> Option<Self> {
+        match (self, rhs) {
+            (Self::Int(s), Self::Int(o)) => Some(Self::Int(s & o)),
+            (Self::Uint(s), Self::Uint(o)) => Some(Self::Uint(s & o)),
+            _ => None,
+        }
+    }
+}
+
 impl BitAnd for Number {
     type Output = Self;
 
