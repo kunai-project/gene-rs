@@ -196,7 +196,7 @@ impl std::fmt::Display for Number {
 impl Number {
     /// Bitwise AND, returning `None` unless both numbers are `Int` or both
     /// are `Uint`.
-    #[inline(always)]
+    #[inline]
     pub fn checked_bitand(self, rhs: Self) -> Option<Self> {
         match (self, rhs) {
             (Self::Int(s), Self::Int(o)) => Some(Self::Int(s & o)),
@@ -209,7 +209,7 @@ impl Number {
 macro_rules! impl_unsigned_number {
     ($($src:ty),*) => {
         $(impl From<$src> for Number {
-            #[inline(always)]
+            #[inline]
             fn from(value: $src) -> Self {
                 Self::Uint(value as u64)
             }
@@ -220,7 +220,7 @@ macro_rules! impl_unsigned_number {
 macro_rules! impl_signed_number {
     ($($src:ty),*) => {
         $(impl From<$src> for Number {
-            #[inline(always)]
+            #[inline]
             fn from(value: $src) -> Self {
                 if value < 0 {
                     return Self::Int(value as i64);
@@ -235,14 +235,14 @@ impl_unsigned_number!(u8, u16, u32, u64, usize);
 impl_signed_number!(i8, i16, i32, i64, isize);
 
 impl From<f32> for Number {
-    #[inline(always)]
+    #[inline]
     fn from(value: f32) -> Self {
         Self::from(value as f64)
     }
 }
 
 impl From<f64> for Number {
-    #[inline(always)]
+    #[inline]
     fn from(value: f64) -> Self {
         Self::Float(value)
     }
@@ -322,7 +322,7 @@ impl Number {
     /// This method checks if the number is stored in the `Uint(u64)` variant.
     /// Unsigned integers are used for non-negative values that fit within the
     /// `u64` range.
-    #[inline(always)]
+    #[inline]
     pub fn is_uint(&self) -> bool {
         matches!(self, Self::Uint(_))
     }
@@ -331,7 +331,7 @@ impl Number {
     ///
     /// This method checks if the number is stored in the `Float(f64)` variant.
     /// Floating-point numbers are used for values with decimal precision.
-    #[inline(always)]
+    #[inline]
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float(_))
     }
@@ -341,7 +341,7 @@ impl Number {
     /// This method checks if the number is stored in the `Int(i64)` variant.
     /// Signed integers are used for negative values or zero. Positive values
     /// that could fit in `u64` are represented as `Uint` variants instead.
-    #[inline(always)]
+    #[inline]
     pub fn is_int(&self) -> bool {
         matches!(self, Self::Int(_))
     }
@@ -391,18 +391,18 @@ impl FieldValue<'_> {
         matches!(self, FieldValue::String(_))
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn is_some(&self) -> bool {
         !self.is_none()
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn is_none(&self) -> bool {
         matches!(self, FieldValue::None)
     }
 
     #[cfg(test)]
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn is_vector(&self) -> bool {
         matches!(self, FieldValue::Vector(_))
     }

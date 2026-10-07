@@ -173,7 +173,7 @@ impl From<rules::Error> for Error {
 }
 
 impl Error {
-    #[inline(always)]
+    #[inline]
     pub(crate) fn dependency_not_found<S: AsRef<str>>(s: S) -> Self {
         Self::DependencyNotFound(s.as_ref().into())
     }
@@ -574,7 +574,7 @@ impl RuleMatch {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn rule_name(&self) -> &str {
         &self.0
     }

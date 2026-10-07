@@ -112,7 +112,7 @@ impl<'f> FieldNameIterator<'f> {
     /// assert_eq!(iter.next_field_name(), Some("field2"));
     /// assert!(iter.is_terminal()); // After advancing once, at last field
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn is_terminal(&self) -> bool {
         self.i.unwrap_or_default() + 1 == self.field_names.len()
     }
