@@ -80,7 +80,7 @@ where
         Self::Exclude(None)
     }
 
-    #[inline(always)]
+    #[inline]
     fn exclude(&mut self, s: &'s str) {
         *self = Self::Exclude(Some(Cow::Borrowed(s)))
     }
@@ -104,7 +104,7 @@ where
     ///
     /// Returns `None` if this is an `Exclude` variant. This method consumes `self`,
     /// transferring ownership of the included data to the caller.
-    #[inline(always)]
+    #[inline]
     pub fn take_include(self) -> Option<T> {
         match self {
             Self::Include(i) => Some(i),
@@ -116,7 +116,7 @@ where
     ///
     /// Returns `None` if this is an `Exclude` variant. This is a non-consuming
     /// method that provides borrowed access to the included data.
-    #[inline(always)]
+    #[inline]
     pub fn get_include(&self) -> Option<&T> {
         match self {
             Self::Include(i) => Some(i),
@@ -128,7 +128,7 @@ where
     ///
     /// Returns `None` if this is an `Include` variant. The returned value is
     /// an `Option<&Option<Cow<'_, str>>>` representing the optional exclusion rule.
-    #[inline(always)]
+    #[inline]
     pub fn get_exclude(&self) -> Option<&Option<Cow<'_, str>>> {
         match self {
             Self::Exclude(i) => Some(i),
@@ -137,13 +137,13 @@ where
     }
 
     /// Returns `true` if this is an `Include` variant.
-    #[inline(always)]
+    #[inline]
     pub fn is_include(&self) -> bool {
         matches!(self, Self::Include(_))
     }
 
     /// Returns `true` if this is an `Exclude` variant.
-    #[inline(always)]
+    #[inline]
     pub fn is_exclude(&self) -> bool {
         matches!(self, Self::Exclude(_))
     }
@@ -152,7 +152,7 @@ where
     ///
     /// This indicates a default exclusion where `Exclude(None)` was used,
     /// distinguishing it from exclusions from a specific exclusion rule.
-    #[inline(always)]
+    #[inline]
     pub fn is_default_exclude(&self) -> bool {
         matches!(self, Self::Exclude(None))
     }
@@ -200,7 +200,7 @@ impl<'s> ScanResult<'s> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn update_include(&mut self, r: &'s CompiledRule) {
         // we update matches only if it is not a filter rule
         if r.is_detection() {
@@ -305,7 +305,7 @@ impl<'s> ScanResult<'s> {
     ///
     /// This is `true` when detection rules are excluded and filter rules are included,
     /// indicating that only filter rules matched during scanning.
-    #[inline(always)]
+    #[inline]
     pub fn is_only_filter_include(&self) -> bool {
         self.detection_decision().is_exclude() && self.filter_decision().is_include()
     }
@@ -331,7 +331,7 @@ impl<'s> ScanResult<'s> {
     /// // let scan_result = engine.scan(&event).unwrap();
     /// // assert!(scan_result.includes_filter("test.filter"));
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn includes_filter<S: AsRef<str>>(&self, name: S) -> bool {
         self.filter
             .get_include()
@@ -359,7 +359,7 @@ impl<'s> ScanResult<'s> {
     /// // let scan_result = engine.scan(&event).unwrap();
     /// // assert!(scan_result.includes_detection("test.detection"));
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn includes_detection<S: AsRef<str>>(&self, name: S) -> bool {
         self.detection
             .get_include()
@@ -391,7 +391,7 @@ impl<'s> ScanResult<'s> {
     /// // let scan_result = engine.scan(&event).unwrap();
     /// // assert!(scan_result.includes_tag("network"));
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn includes_tag<S: AsRef<str>>(&self, tag: S) -> bool {
         self.detection
             .get_include()
@@ -427,7 +427,7 @@ impl<'s> ScanResult<'s> {
     /// // let scan_result = engine.scan(&event).unwrap();
     /// // assert!(scan_result.includes_action("alert"));
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn includes_action<S: AsRef<str>>(&self, action: S) -> bool {
         self.detection
             .get_include()
@@ -466,7 +466,7 @@ impl<'s> ScanResult<'s> {
     /// // assert!(scan_result.includes_attack_id("t1059"));
     /// // assert!(scan_result.includes_attack_id("T1059"));
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn includes_attack_id<S: AsRef<str>>(&self, id: S) -> bool {
         let attack_id = id.as_ref().to_ascii_uppercase();
 
@@ -667,7 +667,7 @@ impl Engine {
     }
 
     /// Must only be called on a cache miss: always rebuilds and overwrites the entry.
-    #[inline(always)]
+    #[inline]
     fn cache_rules(&mut self, src: &str, id: i64) {
         let mut tmp_filters = BTreeMap::new();
         let mut tmp_detections = BTreeMap::new();
@@ -699,7 +699,7 @@ impl Engine {
             .insert((Cow::Owned(src.to_owned()), id), entry);
     }
 
-    #[inline(always)]
+    #[inline]
     fn cached_rules<'a>(&'a self, src: &'a str, id: i64) -> Option<&'a RuleCacheEntry> {
         self.rules_cache.get(&(Cow::Borrowed(src), id))
     }
@@ -710,13 +710,13 @@ impl Engine {
     }
 
     /// returns the number of rules loaded in the engine
-    #[inline(always)]
+    #[inline]
     pub fn rules_count(&self) -> usize {
         self.rules.len()
     }
 
     /// returns true if no rules are loaded in the engine
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }

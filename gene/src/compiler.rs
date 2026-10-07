@@ -162,7 +162,7 @@ impl Compiler {
     }
 
     /// Returns whether compiler is ready (i.e. all the rules have been compiled)
-    #[inline(always)]
+    #[inline]
     fn is_ready(&self) -> bool {
         self.rules.len() == self.compiled.len()
     }

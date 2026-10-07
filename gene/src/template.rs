@@ -158,7 +158,7 @@ impl Templates {
     /// This method returns the count of key-value pairs stored in the templates.
     /// It provides a way to determine how many template variables are available
     /// for substitution in rules.
-    #[inline(always)]
+    #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -167,7 +167,7 @@ impl Templates {
     ///
     /// This is a convenience method that checks if the number of templates is zero.
     /// It's equivalent to `self.len() == 0` but may be more readable in some contexts.
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

@@ -166,7 +166,7 @@ impl EventDerive {
             .clone()
             .map(|id| {
                 quote! {
-                    #[inline(always)]
+                    #[inline]
                     fn id(&self) -> i64 {
                         #id
                     }
@@ -179,7 +179,7 @@ impl EventDerive {
             .clone()
             .map(|source| {
                 quote! {
-                    #[inline(always)]
+                    #[inline]
                     fn source(&self) -> std::borrow::Cow<'_,str> {
                         #source
                     }
@@ -357,7 +357,7 @@ impl FieldGetterDerive {
 
         let expand = quote! {
             impl #trait_generics FieldGetter<#flt> for #struct_name #generics #generic_trait_bound{
-                #[inline(always)]
+                #[inline]
                 fn get_from_iter(&#flt self, mut i: FieldNameIterator) -> Option<FieldValue<#flt>> {
 
                     let field = match i.next_field_name() {
