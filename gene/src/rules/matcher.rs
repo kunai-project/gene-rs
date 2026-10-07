@@ -55,7 +55,7 @@ impl MatchParser {
     }
 
     #[inline]
-    fn parse_input<S: AsRef<str>>(input: S) -> Result<Match, Error> {
+    fn parse_input<S: AsRef<str>>(input: S) -> Result<Match, ParseError> {
         let mut pairs = MatchParser::parse(Rule::matcher, input.as_ref()).map_err(Box::new)?;
         match pairs.next() {
             Some(pair) => {
@@ -69,9 +69,9 @@ impl MatchParser {
                             IndirectMatch::from_str(input.as_ref()).map(Match::from)
                         }
                         Rule::rule_match => Ok(Match::from(RuleMatch::from_pair(pair))),
-                        _ => Err(Error::parser("unknown match format", pair.as_span())),
+                        _ => Err(ParseError::new("unknown match format", pair.as_span())),
                     },
-                    _ => Err(Error::parser("match empty inner pairs", span)),
+                    _ => Err(ParseError::new("match empty inner pairs", span)),
                 }
             }
             _ => unreachable!(),
@@ -110,6 +110,32 @@ impl MatchValue {
     }
 }
 
+/// Error raised while parsing a match expression.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum ParseError {
+    #[error("{0}")]
+    Path(#[from] PathError),
+    #[error("{0}")]
+    Parser(#[from] Box<pest::error::Error<Rule>>),
+    #[error("{0}")]
+    ParseNum(#[from] NumberError),
+    #[error("{0}")]
+    Regex(#[from] regex::Error),
+}
+
+impl ParseError {
+    #[inline]
+    fn new<S: ToString>(msg: S, span: Span<'_>) -> Self {
+        Self::Parser(Box::new(pest::error::Error::new_from_span(
+            ErrorVariant::CustomError {
+                message: msg.to_string(),
+            },
+            span,
+        )))
+    }
+}
+
+/// Error raised while matching an event.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum Error {
     #[error("dependency rule={0} not found")]
@@ -124,14 +150,6 @@ pub enum Error {
         expect: &'static str,
         got: &'static str,
     },
-    #[error("{0}")]
-    Path(#[from] PathError),
-    #[error("{0}")]
-    Parser(#[from] Box<pest::error::Error<Rule>>),
-    #[error("{0}")]
-    ParseNum(#[from] NumberError),
-    #[error("{0}")]
-    Regex(#[from] regex::Error),
     #[error("dependency: {0}")]
     Rule(Box<rules::Error>),
 }
@@ -143,16 +161,6 @@ impl From<rules::Error> for Error {
 }
 
 impl Error {
-    #[inline]
-    fn parser<S: ToString>(msg: S, span: Span<'_>) -> Self {
-        Self::Parser(Box::new(pest::error::Error::new_from_span(
-            ErrorVariant::CustomError {
-                message: msg.to_string(),
-            },
-            span,
-        )))
-    }
-
     #[inline(always)]
     pub(crate) fn dependency_not_found<S: AsRef<str>>(s: S) -> Self {
         Self::DependencyNotFound(s.as_ref().into())
@@ -160,11 +168,11 @@ impl Error {
 }
 
 impl MatchValue {
-    fn value_regex(s: &str) -> Result<Self, Error> {
+    fn value_regex(s: &str) -> Result<Self, ParseError> {
         Regex::new(s).map(Self::Regex).map_err(|e| e.into())
     }
 
-    fn value_number<S: AsRef<str>>(s: S) -> Result<Self, Error> {
+    fn value_number<S: AsRef<str>>(s: S) -> Result<Self, ParseError> {
         let s = s.as_ref();
         Ok(MatchValue::Number(Number::from_str(s)?))
     }
@@ -197,7 +205,7 @@ impl From<RuleMatch> for Match {
 }
 
 impl FromStr for Match {
-    type Err = Error;
+    type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         MatchParser::parse_input(s)
     }
@@ -230,7 +238,7 @@ pub(crate) struct IndirectMatch {
 }
 
 impl FromStr for IndirectMatch {
-    type Err = Error;
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut pairs = MatchParser::parse(Rule::indirect_match, s).map_err(Box::new)?;
@@ -319,7 +327,7 @@ pub(crate) struct DirectMatch {
 }
 
 impl MatchValue {
-    fn from_pair(op: Op, pair: Pair<'_, Rule>) -> Result<Self, Error> {
+    fn from_pair(op: Op, pair: Pair<'_, Rule>) -> Result<Self, ParseError> {
         debug_assert_eq!(pair.as_rule(), Rule::value);
 
         // this cannot panic as value must have at least one inner pair
@@ -353,20 +361,20 @@ impl MatchValue {
                 let num_str = inner_pair.as_str().trim_matches('\'').trim_matches('"');
                 match inner_pair.as_rule() {
                     Rule::number | Rule::hex => MatchValue::value_number(num_str),
-                    _ => Err(Error::parser("value must be a number", span)),
+                    _ => Err(ParseError::new("value must be a number", span)),
                 }
             }
             Op::Rex => match inner_pair.as_rule() {
                 Rule::value_dq => MatchValue::value_regex(inner_pair.as_str().trim_matches('"')),
                 Rule::value_sq => MatchValue::value_regex(inner_pair.as_str().trim_matches('\'')),
-                _ => Err(Error::parser("value must be a quoted string", span)),
+                _ => Err(ParseError::new("value must be a quoted string", span)),
             },
         }
     }
 }
 
 impl FromStr for DirectMatch {
-    type Err = Error;
+    type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let pairs = MatchParser::parse(Rule::_direct_match, s).map_err(Box::new)?;
 

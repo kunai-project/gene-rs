@@ -54,24 +54,16 @@ lazy_static! {
 }
 
 mod attack {
-    use thiserror::Error;
-
-    use super::ATTACK_ID_RE;
-
-    #[derive(Debug, Error)]
-    pub enum Error {
-        #[error("invalid attack id: {0}")]
-        Invalid(String),
-    }
+    use super::{CompileError, ATTACK_ID_RE};
 
     #[derive(Hash)]
     pub(crate) struct AttackId(String);
 
     impl AttackId {
-        pub(crate) fn parse<S: AsRef<str>>(s: S) -> Result<Self, Error> {
+        pub(crate) fn parse<S: AsRef<str>>(s: S) -> Result<Self, CompileError> {
             let s = s.as_ref();
             if !ATTACK_ID_RE.is_match(s) {
-                return Err(Error::Invalid(s.into()));
+                return Err(CompileError::InvalidAttackId(s.into()));
             }
             Ok(Self(s.to_uppercase()))
         }
@@ -441,7 +433,7 @@ impl Rule {
         let filters = self.match_on.and_then(|mo| mo.events).unwrap_or_default();
 
         // to wrap error with rule name
-        || -> Result<CompiledRule, ErrorKind> {
+        || -> Result<CompiledRule, CompileError> {
             let mut c = CompiledRule {
                 name: self.name,
                 ty: self.ty.unwrap_or_default(),
@@ -455,7 +447,7 @@ impl Rule {
                 exclude_events: Self::build_exclude_events(&filters),
                 matches: HashMap::new(),
                 condition: match self.condition {
-                    Some(cond) => Condition::from_str(&cond).map_err(Box::new)?,
+                    Some(cond) => Condition::from_str(&cond)?,
                     None => Condition::default(),
                 },
                 severity: bound_severity(self.severity.unwrap_or_default()),
@@ -471,8 +463,7 @@ impl Rule {
                 if let Some(attack) = meta.attack {
                     // we make sure attack id is correct
                     for r in attack.iter().map(AttackId::parse) {
-                        c.attack
-                            .insert(r.map_err(|e| ErrorKind::Compile(e.to_string()))?.into());
+                        c.attack.insert(r?.into());
                     }
                 }
             }
@@ -481,9 +472,7 @@ impl Rule {
             if let Some(matches) = self.matches {
                 for (operand, s) in matches.iter() {
                     if !operand.starts_with('$') {
-                        return Err(ErrorKind::Compile(format!(
-                            "operand must start with $, try with ${operand}"
-                        )));
+                        return Err(CompileError::InvalidOperand(operand.clone()));
                     }
                     let m = Match::from_str(s)?;
                     // we update the list of dependent rules
@@ -494,9 +483,14 @@ impl Rule {
                 }
             }
 
+            c.condition.check_operands(&c.matches)?;
+
             Ok(c)
         }()
-        .map_err(|kind| Error { rule: name, kind })
+        .map_err(|e| Error {
+            rule: name,
+            kind: ErrorKind::Compile(e),
+        })
     }
 }
 
@@ -564,28 +558,34 @@ pub struct Error {
 /// The kinds of errors that can occur when compiling or evaluating a rule.
 #[derive(Debug, Clone, Error, PartialEq)]
 pub enum ErrorKind {
-    /// Compilation error that occurred during rule processing.
-    ///
-    /// This variant represents errors that occur when compiling.
-    /// The string contains a descriptive error message
-    /// explaining what went wrong during compilation.
-    #[error("compile error: {0}")]
-    Compile(String),
-
-    /// Error that occurred while parsing match expressions.
-    ///
-    /// This variant is only produced at compile time, when there are syntax
-    /// errors or invalid patterns in rule match expressions.
+    /// Error while compiling a rule.
     #[error("{0}")]
-    Match(#[from] matcher::Error),
+    Compile(#[from] CompileError),
 
-    /// Error that occurred while evaluating a rule against an event.
-    ///
-    /// This variant covers all evaluation errors, such as invalid operators,
-    /// type mismatches, missing fields, or failing dependencies. Errors
-    /// raised by matchers during evaluation are wrapped here too.
+    /// Error while evaluating a rule against an event, such as type
+    /// mismatches, missing fields, or failing dependencies.
     #[error("{0}")]
-    Condition(#[from] Box<condition::Error>),
+    Eval(#[from] matcher::Error),
+}
+
+/// The kinds of errors that can occur when compiling a rule.
+#[derive(Debug, Clone, Error, PartialEq)]
+pub enum CompileError {
+    /// Malformed ATT&CK id in the rule metadata.
+    #[error("invalid attack id: {0}")]
+    InvalidAttackId(String),
+
+    /// Operand name not starting with `$`.
+    #[error("operand must start with $, try with ${0}")]
+    InvalidOperand(String),
+
+    /// Syntax error or invalid pattern in a match expression.
+    #[error("{0}")]
+    Match(#[from] matcher::ParseError),
+
+    /// Syntax error in the condition, or reference to an undefined operand.
+    #[error("{0}")]
+    Condition(#[from] condition::ParseError),
 }
 
 impl TryFrom<Rule> for CompiledRule {
@@ -609,7 +609,7 @@ impl CompiledRule {
             .compute_for_event(event, &self.matches, ctx)
             .map_err(|e| Error {
                 rule: self.name.clone(),
-                kind: ErrorKind::Condition(Box::new(e)),
+                kind: ErrorKind::Eval(e),
             })
     }
 
@@ -820,7 +820,7 @@ condition: $b
         fake_event!(Dummy, (".data.exe.size", "42*3"));
         assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
-            matches!(e.kind, ErrorKind::Condition(_))
+            matches!(e.kind, ErrorKind::Eval(_))
         }));
     }
 
@@ -840,28 +840,46 @@ condition: $b
         fake_event!(Dummy, (".data.exe.size", "43"));
         assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
-            matches!(e.kind, ErrorKind::Condition(_))
+            matches!(e.kind, ErrorKind::Eval(_))
         }));
     }
 
     #[test]
     fn test_unknown_operand() {
-        let test = r#"
+        let conditions = [
+            "$c",
+            "$b and $c",
+            "$c or $b",
+            "not $c",
+            "($c)",
+            "$b and not $c",
+            "$b or ($b and (not ($c)))",
+            "all of them and $c",
+            "1 of $b or $c",
+        ];
+
+        for cond in conditions {
+            let test = format!(
+                r#"
 ---
 name: test
 matches:
     $b: .data.not_existing_field > '42'
-condition: $c
-..."#;
+condition: {cond}
+..."#
+            );
 
-        let d: Rule = serde_yaml::from_str(test).unwrap();
-        let cr = CompiledRule::try_from(d).unwrap();
-
-        fake_event!(Dummy, (".data.exe.size", "43"));
-        assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
-            eprintln!("{e}");
-            matches!(e.kind, ErrorKind::Condition(_))
-        }));
+            let d: Rule = serde_yaml::from_str(&test).unwrap();
+            assert!(
+                CompiledRule::try_from(d).is_err_and(|e| matches!(
+                    e.kind,
+                    ErrorKind::Compile(CompileError::Condition(
+                        condition::ParseError::UnknownOperand(ref v)
+                    )) if v == "$c"
+                )),
+                "{cond}"
+            );
+        }
     }
 
     #[test]
