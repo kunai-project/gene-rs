@@ -76,7 +76,7 @@ impl FromStr for XPath {
 }
 
 impl PartialEq for XPath {
-    #[inline(always)]
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         if self.path.len() != other.path.len() {
             return false;
@@ -140,7 +140,7 @@ impl XPath {
     /// let segments = path.segments();
     /// assert_eq!(segments, &vec!["field".to_string(), "subfield".to_string()]);
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn segments(&self) -> &[String] {
         &self.segments
     }
@@ -162,7 +162,7 @@ impl XPath {
     /// assert_eq!(iter.next(), Some(&"subfield".to_string()));
     /// assert_eq!(iter.next(), None);
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn iter_segments(&self) -> core::slice::Iter<'_, std::string::String> {
         self.segments.iter()
     }
@@ -181,7 +181,7 @@ impl XPath {
     /// let path = XPath::parse(".field.subfield").unwrap();
     /// assert_eq!(path.to_string_lossy(), ".field.subfield");
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         Cow::from(&self.path)
     }

@@ -35,7 +35,7 @@ impl<K, V> DerefMut for UKHashMap<K, V> {
 }
 
 /// helper to deserialize a UKHashMap into a HashMap
-#[inline(always)]
+#[inline]
 pub(crate) fn deserialize_uk_hashmap<'de, D, K, V>(
     deserializer: D,
 ) -> Result<Option<HashMap<K, V>>, D::Error>

@@ -179,7 +179,7 @@ impl Decision {
     /// let decision = Decision::Exclude;
     /// assert!(!decision.is_include());
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn is_include(&self) -> bool {
         matches!(self, Self::Include)
     }
@@ -197,7 +197,7 @@ impl Decision {
     /// let decision = Decision::Include;
     /// assert!(!decision.is_exclude());
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn is_exclude(&self) -> bool {
         matches!(self, Self::Exclude)
     }
@@ -347,7 +347,7 @@ impl Rule {
     /// Checks the rule's parameters for a `disable` flag. Returns `false` if the
     /// parameter is not set or if the rule has no parameters. Disabled rules are
     /// skipped during engine processing.
-    #[inline(always)]
+    #[inline]
     pub fn is_disabled(&self) -> bool {
         self.params
             .as_ref()
@@ -599,7 +599,7 @@ impl TryFrom<Rule> for CompiledRule {
 }
 
 impl CompiledRule {
-    #[inline(always)]
+    #[inline]
     pub(crate) fn match_event<E>(
         &self,
         event: &E,
@@ -616,7 +616,7 @@ impl CompiledRule {
             })
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn can_match_on<S: AsRef<str>>(&self, src: S, id: i64) -> bool {
         // we have no filter at all
         if self.include_events.is_empty() && self.exclude_events.is_empty() {
@@ -659,13 +659,13 @@ impl CompiledRule {
     }
 
     /// Returns true if the rule is [`Type::Filter`]
-    #[inline(always)]
+    #[inline]
     pub fn is_filter(&self) -> bool {
         matches!(self.ty, Type::Filter)
     }
 
     /// Returns true if the rule is [`Type::Detection`]
-    #[inline(always)]
+    #[inline]
     pub fn is_detection(&self) -> bool {
         matches!(self.ty, Type::Detection)
     }
@@ -681,7 +681,7 @@ impl CompiledRule {
     }
 
     /// Returns rule's [`Type`]
-    #[inline(always)]
+    #[inline]
     pub fn ty(&self) -> Type {
         self.ty
     }
