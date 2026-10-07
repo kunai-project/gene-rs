@@ -166,10 +166,153 @@ fn bench_scan_deps(c: &mut Criterion) {
     group.finish();
 }
 
+// Process events shaped like Kunai's, with struct fields rather than maps.
+#[derive(Debug, FieldGetter)]
+struct ProcData {
+    exe: String,
+    command_line: String,
+    ancestors: String,
+}
+
+#[derive(Debug, Event, FieldGetter)]
+#[event(id = self.id, source = "kunai".into())]
+struct ProcEvent {
+    id: i64,
+    data: ProcData,
+}
+
+// Detection rules sharing dependencies and using group operators, the
+// patterns seen in Kunai rule sets.
+const DEPENDENCY_RULES: &str = r#"
+name: dep.tmp.exe
+type: dependency
+matches:
+    $exe: .data.exe ~= '^/(tmp|dev/shm|run)/'
+    $anc: .data.ancestors ~= '\|/(tmp|dev/shm|run)/'
+condition: any of them
+---
+name: dep.web.parent
+type: dependency
+matches:
+    $anc: .data.ancestors ~= '\|/usr/sbin/(apache2|nginx)\|'
+condition: $anc
+---
+name: tmp.exe
+match-on:
+    events:
+        kunai: [1]
+matches:
+    $d: rule(dep.tmp.exe)
+condition: $d
+---
+name: tmp.exe.download
+match-on:
+    events:
+        kunai: [1]
+matches:
+    $dl: .data.command_line ~= '(curl|wget) '
+    $d: rule(dep.tmp.exe)
+condition: $dl and $d
+---
+name: webshell
+match-on:
+    events:
+        kunai: [1]
+matches:
+    $sh: .data.exe ~= '/(ba|da|z)?sh$'
+    $d: rule(dep.web.parent)
+condition: all of them
+---
+name: shell.from.web.tmp
+match-on:
+    events:
+        kunai: [1]
+matches:
+    $d1: rule(dep.web.parent)
+    $d2: rule(dep.tmp.exe)
+condition: any of $d
+---
+name: susp.cli
+match-on:
+    events:
+        kunai: [1]
+matches:
+    $c1: .data.command_line ~= 'base64 -d'
+    $c2: .data.command_line ~= 'chmod \+x /tmp/'
+    $c3: .data.command_line ~= 'nc -e'
+condition: 1 of $c
+"#;
+
+fn proc_events(n: usize) -> Vec<ProcEvent> {
+    let samples = [
+        ("/usr/bin/ls", "ls -la /home", "|/sbin/init|/usr/bin/bash|"),
+        (
+            "/usr/bin/curl",
+            "curl -s https://example.org",
+            "|/sbin/init|/usr/bin/bash|",
+        ),
+        (
+            "/tmp/payload",
+            "/tmp/payload --run",
+            "|/sbin/init|/usr/bin/bash|",
+        ),
+        (
+            "/usr/bin/bash",
+            "bash -c id",
+            "|/sbin/init|/usr/sbin/nginx|",
+        ),
+        (
+            "/usr/bin/python3",
+            "python3 -m http.server",
+            "|/sbin/init|/usr/sbin/sshd|",
+        ),
+        ("/usr/bin/sh", "sh -c base64 -d", "|/sbin/init|/tmp/loader|"),
+    ];
+    (0..n)
+        .map(|i| {
+            let (exe, cmd, anc) = samples[i % samples.len()];
+            ProcEvent {
+                id: 1,
+                data: ProcData {
+                    exe: exe.into(),
+                    command_line: cmd.into(),
+                    ancestors: anc.into(),
+                },
+            }
+        })
+        .collect()
+}
+
+fn bench_dependency_rules(c: &mut Criterion) {
+    let mut compiler = Compiler::new();
+    compiler.load_rules_from_str(DEPENDENCY_RULES).unwrap();
+    let mut engine = Engine::try_from(compiler).unwrap();
+    let events = proc_events(10_000);
+
+    // guard against a rule set that silently stops matching
+    let detections = events
+        .iter()
+        .filter(|e| matches!(engine.scan(*e), Ok(sr) if sr.detection.get_include().is_some()))
+        .count();
+    assert!(detections > 0);
+
+    let mut group = c.benchmark_group("scan-dependencies");
+    group.throughput(Throughput::Elements(events.len() as u64));
+    group.bench_function("scan-kunai-like-events", |b| {
+        b.iter(|| {
+            for e in events.iter() {
+                black_box(engine.scan(e).unwrap());
+            }
+        })
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_rust_events,
     bench_engine_build,
-    bench_scan_deps
+    bench_scan_deps,
+    bench_dependency_rules
 );
 criterion_main!(benches);
