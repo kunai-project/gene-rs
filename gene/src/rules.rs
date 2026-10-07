@@ -448,7 +448,7 @@ impl Rule {
                 attack: HashSet::new(),
                 include_events: Self::build_include_events(&filters),
                 exclude_events: Self::build_exclude_events(&filters),
-                matches: HashMap::new(),
+                operands: Vec::new(),
                 condition: match self.condition {
                     Some(cond) => Condition::from_str(&cond)?,
                     None => Condition::default(),
@@ -471,22 +471,22 @@ impl Rule {
                 }
             }
 
-            // initializing operands
+            // Freeze the operand map's iteration order before binding group operators.
+            let mut operands = HashMap::new();
             if let Some(matches) = self.matches {
-                for (operand, s) in matches.iter() {
-                    if !operand.starts_with('$') {
-                        return Err(CompileError::InvalidOperand(operand.clone()));
+                for (name, expression) in matches {
+                    if !name.starts_with('$') {
+                        return Err(CompileError::InvalidOperand(name));
                     }
-                    let m = Match::from_str(s)?;
-                    // we update the list of dependent rules
-                    if let Match::Rule(r) = &m {
-                        c.depends.insert(r.rule_name().into());
+                    let m = Match::from_str(&expression)?;
+                    if let Match::Rule(dependency) = &m {
+                        c.depends.insert(dependency.rule_name().into());
                     }
-                    c.matches.insert(operand.clone(), m);
+                    operands.insert(name, m);
                 }
             }
-
-            c.condition.check_operands(&c.matches)?;
+            c.operands = operands.into_iter().collect();
+            c.condition.bind(&c.operands)?;
 
             Ok(c)
         }()
@@ -521,7 +521,7 @@ impl FromStr for Rule {
 ///
 /// The compiled form uses optimized data structures:
 /// - `HashSet` for O(1) lookups of tags, attack IDs, and actions
-/// - `HashMap` for efficient field match expression access
+/// - `Vec` for index-based match expression access
 /// - Pre-parsed conditions for faster evaluation
 /// - Event filtering maps for quick event matching checks
 ///
@@ -536,7 +536,7 @@ pub struct CompiledRule {
     pub(crate) attack: HashSet<String>,
     pub(crate) include_events: HashMap<String, HashSet<i64>>,
     pub(crate) exclude_events: HashMap<String, HashSet<i64>>,
-    pub(crate) matches: HashMap<String, Match>,
+    pub(crate) operands: Vec<(String, Match)>,
     pub(crate) condition: condition::Condition,
     pub(crate) severity: u8,
     pub(crate) actions: HashSet<String>,
@@ -609,7 +609,7 @@ impl CompiledRule {
         E: for<'e> Event<'e>,
     {
         self.condition
-            .compute_for_event(event, &self.matches, ctx)
+            .compute_for_event(event, &self.operands, ctx)
             .map_err(|e| Error {
                 rule: self.name.clone(),
                 kind: ErrorKind::Eval(e),

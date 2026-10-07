@@ -1938,4 +1938,28 @@ condition: $dep
         results.insert(1, &Ok(false));
         assert_eq!(results.get(1), Some(Ok(false)));
     }
+    #[test]
+    fn bound_groups_preserve_short_circuit_order() {
+        let mut e = engine(
+            r#"
+name: detection
+matches:
+    $a: .present == 'x'
+    $b: .missing == 'x'
+condition: any of them
+"#,
+        );
+        // Fix the order for the test; production retains the source map's order.
+        e.rules[0].operands.sort_by(|a, b| a.0.cmp(&b.0));
+        let rule = &mut e.rules[0];
+        rule.condition.bind(&rule.operands).unwrap();
+        let event = Recorder::new(&[(".present", "x")]);
+        assert!(e.scan(&event).unwrap().includes_detection("detection"));
+        assert_eq!(event.count(".missing"), 0);
+        e.rules[0].operands.reverse();
+        let rule = &mut e.rules[0];
+        rule.condition.bind(&rule.operands).unwrap();
+        assert!(e.scan(&event).is_err());
+        assert_eq!(event.count(".missing"), 1);
+    }
 }

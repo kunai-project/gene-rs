@@ -24,7 +24,7 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Op {
     And,
     Or,
@@ -83,42 +83,73 @@ impl FromStr for Expr {
     }
 }
 
-impl Expr {
+/// [`Expr`] with operands resolved to their index in the rule's operand
+/// list, so evaluation does not look operands up by name.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) enum BoundExpr {
+    Operand(usize),
+    AllOf(Vec<usize>),
+    AnyOf(Vec<usize>),
+    NoneOf(Vec<usize>),
+    NOf(usize, Vec<usize>),
+    BinOp {
+        lhs: Box<BoundExpr>,
+        op: Op,
+        rhs: Box<BoundExpr>,
+    },
+    Negate(Box<BoundExpr>),
+    #[default]
+    None,
+}
+
+impl BoundExpr {
     #[inline]
     fn compute_for_event<E>(
         &self,
         event: &E,
-        operands: &HashMap<String, Match>,
+        operands: &[(String, Match)],
         mut ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, matcher::Error>
     where
         E: for<'e> Event<'e>,
     {
+        let operand = |i: usize| {
+            &operands
+                .get(i)
+                .expect("operand indexes come from Expr::bind over this operand list")
+                .1
+        };
+
         match self {
-            Expr::AllOfThem => {
-                for m in operands.values() {
-                    if !m.match_event(event, ctx.as_deref_mut())? {
+            BoundExpr::Operand(i) => operand(*i).match_event(event, ctx),
+            BoundExpr::AllOf(idx) => {
+                for &i in idx {
+                    if !operand(i).match_event(event, ctx.as_deref_mut())? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
-            Expr::AllOfVars(start) => {
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if !m.match_event(event, ctx.as_deref_mut())? {
+            BoundExpr::AnyOf(idx) => {
+                for &i in idx {
+                    if operand(i).match_event(event, ctx.as_deref_mut())? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            BoundExpr::NoneOf(idx) => {
+                for &i in idx {
+                    if operand(i).match_event(event, ctx.as_deref_mut())? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
-            Expr::NOfThem(n) => {
+            BoundExpr::NOf(n, idx) => {
                 let mut c = 0;
-                for m in operands.values() {
-                    if m.match_event(event, ctx.as_deref_mut())? {
+                for &i in idx {
+                    if operand(i).match_event(event, ctx.as_deref_mut())? {
                         c += 1;
                         if c >= *n {
                             return Ok(true);
@@ -127,100 +158,55 @@ impl Expr {
                 }
                 Ok(c >= *n)
             }
-            Expr::NOfVars(n, start) => {
-                let mut c = 0;
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        c += 1;
-                        if c >= *n {
-                            return Ok(true);
-                        }
-                    }
-                }
-                Ok(c >= *n)
-            }
-            Expr::AnyOfThem => {
-                for m in operands.values() {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Expr::AnyOfVars(start) => {
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Expr::NoneOfThem => {
-                for m in operands.values() {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Expr::NoneOfVars(start) => {
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Expr::Variable(var) => match operands.get(var) {
-                Some(m) => m.match_event(event, ctx),
-                // check_operands rejects unknown operands at compile time
-                None => unreachable!("unknown operand {var}"),
-            },
-            Expr::BinOp { lhs, op, rhs } => match op {
+            BoundExpr::BinOp { lhs, op, rhs } => match op {
                 Op::And => Ok(lhs.compute_for_event(event, operands, ctx.as_deref_mut())?
                     && rhs.compute_for_event(event, operands, ctx)?),
                 Op::Or => Ok(lhs.compute_for_event(event, operands, ctx.as_deref_mut())?
                     || rhs.compute_for_event(event, operands, ctx)?),
             },
-            Expr::Negate(expr) => Ok(!expr.compute_for_event(event, operands, ctx)?),
-            Expr::None => Ok(true),
+            BoundExpr::Negate(expr) => Ok(!expr.compute_for_event(event, operands, ctx)?),
+            BoundExpr::None => Ok(true),
         }
     }
+}
 
-    fn check_operands(&self, operands: &HashMap<String, Match>) -> Result<(), ParseError> {
-        match self {
-            Expr::Variable(var) if !operands.contains_key(var) => {
-                Err(ParseError::UnknownOperand(var.clone()))
-            }
-            Expr::BinOp { lhs, rhs, .. } => {
-                lhs.check_operands(operands)?;
-                rhs.check_operands(operands)
-            }
-            Expr::Negate(expr) => expr.check_operands(operands),
-            // no wildcard: a new variant must decide how its operands are checked
-            Expr::Variable(_)
-            | Expr::AllOfThem
-            | Expr::AllOfVars(_)
-            | Expr::AnyOfThem
-            | Expr::AnyOfVars(_)
-            | Expr::NoneOfThem
-            | Expr::NoneOfVars(_)
-            | Expr::NOfThem(_)
-            | Expr::NOfVars(..)
-            | Expr::None => Ok(()),
-        }
+impl Expr {
+    /// Resolves operand names against `names`, given in the order the
+    /// operands are stored in [`CompiledRule`](crate::rules::CompiledRule).
+    /// Group operators keep that order, so evaluation order is unchanged.
+    /// An undefined operand fails here, so it fails at compile time.
+    fn bind(&self, names: &[&str]) -> Result<BoundExpr, ParseError> {
+        let all = || (0..names.len()).collect::<Vec<_>>();
+        let prefixed = |start: &str| {
+            names
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.starts_with(start))
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+
+        Ok(match self {
+            Expr::Variable(var) => match names.iter().position(|n| n == var) {
+                Some(i) => BoundExpr::Operand(i),
+                None => return Err(ParseError::UnknownOperand(var.clone())),
+            },
+            Expr::AllOfThem => BoundExpr::AllOf(all()),
+            Expr::AllOfVars(start) => BoundExpr::AllOf(prefixed(start)),
+            Expr::AnyOfThem => BoundExpr::AnyOf(all()),
+            Expr::AnyOfVars(start) => BoundExpr::AnyOf(prefixed(start)),
+            Expr::NoneOfThem => BoundExpr::NoneOf(all()),
+            Expr::NoneOfVars(start) => BoundExpr::NoneOf(prefixed(start)),
+            Expr::NOfThem(n) => BoundExpr::NOf(*n, all()),
+            Expr::NOfVars(n, start) => BoundExpr::NOf(*n, prefixed(start)),
+            Expr::BinOp { lhs, op, rhs } => BoundExpr::BinOp {
+                lhs: Box::new(lhs.bind(names)?),
+                op: *op,
+                rhs: Box::new(rhs.bind(names)?),
+            },
+            Expr::Negate(expr) => BoundExpr::Negate(Box::new(expr.bind(names)?)),
+            Expr::None => BoundExpr::None,
+        })
     }
 
     #[allow(dead_code)]
@@ -352,6 +338,7 @@ fn parse_expr(pairs: Pairs<Rule>) -> Expr {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Condition {
     pub(crate) expr: Expr,
+    bound: BoundExpr,
 }
 
 impl FromStr for Condition {
@@ -363,7 +350,10 @@ impl FromStr for Condition {
 
 impl From<Expr> for Condition {
     fn from(value: Expr) -> Self {
-        Self { expr: value }
+        Self {
+            expr: value,
+            bound: BoundExpr::None,
+        }
     }
 }
 
@@ -371,20 +361,21 @@ impl Condition {
     pub(crate) fn compute_for_event<E>(
         &self,
         event: &E,
-        operands: &HashMap<String, Match>,
+        operands: &[(String, Match)],
         ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, matcher::Error>
     where
         E: for<'e> Event<'e>,
     {
-        self.expr.compute_for_event(event, operands, ctx)
+        self.bound.compute_for_event(event, operands, ctx)
     }
 
-    pub(crate) fn check_operands(
-        &self,
-        operands: &HashMap<String, Match>,
-    ) -> Result<(), ParseError> {
-        self.expr.check_operands(operands)
+    /// Resolves the condition against the rule's final operand list. An
+    /// operand the condition uses but the rule does not define is an error.
+    pub(crate) fn bind(&mut self, operands: &[(String, Match)]) -> Result<(), ParseError> {
+        let names: Vec<&str> = operands.iter().map(|(n, _)| n.as_str()).collect();
+        self.bound = self.expr.bind(&names)?;
+        Ok(())
     }
 }
 
