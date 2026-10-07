@@ -59,8 +59,10 @@ impl Default for Expr {
 /// Error raised while parsing a condition.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum ParseError {
+    /// The condition references an operand not defined in `matches`.
     #[error("unknown operand {0}")]
     UnknownOperand(String),
+    /// Syntax error in the condition.
     #[error("{0}")]
     Parser(#[from] Box<pest::error::Error<Rule>>),
 }

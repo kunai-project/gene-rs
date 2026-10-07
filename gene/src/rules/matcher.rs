@@ -113,12 +113,16 @@ impl MatchValue {
 /// Error raised while parsing a match expression.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum ParseError {
+    /// Invalid field path.
     #[error("{0}")]
     Path(#[from] PathError),
+    /// Syntax error in the match expression.
     #[error("{0}")]
     Parser(#[from] Box<pest::error::Error<Rule>>),
+    /// Invalid number value.
     #[error("{0}")]
     ParseNum(#[from] NumberError),
+    /// Invalid regular expression.
     #[error("{0}")]
     Regex(#[from] regex::Error),
 }
@@ -138,18 +142,26 @@ impl ParseError {
 /// Error raised while matching an event.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum Error {
+    /// A `rule(name)` operand references a rule unknown to the engine.
     #[error("dependency rule={0} not found")]
     DependencyNotFound(String),
+    /// A `rule(name)` operand was evaluated outside of an engine scan.
     #[error("dependency rule={0} cannot be resolved without an engine")]
     DependencyUnresolved(String),
+    /// The event has no field at this path.
     #[error("field={0} not found")]
     FieldNotFound(String),
+    /// The event field's type doesn't match the value in the rule.
     #[error("incompatible types field={path} expect={expect} got={got}")]
     IncompatibleTypes {
+        /// Path of the field.
         path: String,
+        /// Type expected by the rule.
         expect: &'static str,
+        /// Type of the event field.
         got: &'static str,
     },
+    /// A dependency failed; wraps its error.
     #[error("dependency: {0}")]
     Rule(Box<rules::Error>),
 }

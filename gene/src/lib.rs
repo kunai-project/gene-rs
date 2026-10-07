@@ -205,6 +205,6 @@ mod template;
 pub use template::Templates;
 
 mod compiler;
-pub use compiler::Compiler;
+pub use compiler::{Compiler, Error as CompilerError, MAX_DEPENDENCY_DEPTH};
 
 mod map;

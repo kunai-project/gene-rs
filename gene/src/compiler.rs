@@ -14,18 +14,25 @@ use crate::{
 /// Maximum length of a `rule(name)` dependency chain accepted by the [`Compiler`]
 pub const MAX_DEPENDENCY_DEPTH: usize = 64;
 
+/// Error raised while loading or compiling rules with a [`Compiler`].
 #[derive(Error, Debug)]
 pub enum Error {
+    /// A rule with the same name was already loaded.
     #[error("duplicate rule={0}")]
     DuplicateRule(String),
+    /// A rule depends on a rule that isn't loaded.
     #[error("unknown rule dependency in rule={0}")]
     UnknownRuleDependency(String),
+    /// A rule's dependency chain is longer than [`MAX_DEPENDENCY_DEPTH`].
     #[error("rule dependency chain deeper than {MAX_DEPENDENCY_DEPTH} in rule={0}")]
     DependencyTooDeep(String),
+    /// A rule failed to compile.
     #[error("rule error: {0}")]
     Rule(#[from] rules::Error),
+    /// Invalid template.
     #[error("template: error {0}")]
     Template(#[from] template::Error),
+    /// Invalid YAML.
     #[error("yaml error: {0}")]
     Serde(#[from] serde_yaml::Error),
 }

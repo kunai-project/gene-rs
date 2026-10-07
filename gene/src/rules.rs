@@ -35,6 +35,9 @@ mod condition;
 // used to parse path
 pub(crate) mod matcher;
 
+pub use condition::ParseError as ConditionParseError;
+pub use matcher::{Error as MatchError, ParseError as MatchParseError};
+
 /// Maximum severity value for rules.
 ///
 /// This constant defines the upper bound for rule severity values in the engine.
