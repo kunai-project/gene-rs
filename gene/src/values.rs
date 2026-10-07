@@ -620,7 +620,7 @@ mod test {
 
         let e = Number::from(0x40_u32);
         assert_eq!(Number::from(0x100040).checked_bitand(e), Some(e));
-        
+
         assert_ne!(Number::from(0x100020).checked_bitand(e), Some(e));
 
         assert_eq!(Number::from_str("-1").unwrap(), Number::from(-1));

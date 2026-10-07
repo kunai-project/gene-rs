@@ -627,6 +627,12 @@ mod test {
     }
 
     #[test]
+    fn test_regression_is_terminal_empty() {
+        let iter = FieldNameIterator::from(&[] as &[String]);
+        assert!(!iter.is_terminal());
+    }
+
+    #[test]
     fn test_smart_pointer_field_getter() {
         #[derive(FieldGetter)]
         struct Inner {
