@@ -848,6 +848,45 @@ condition: $d
     }
 
     #[test]
+    fn test_regression_flag_incompatible_field() {
+        let test = r#"
+---
+name: test
+matches:
+    $f: .data.flags &= 0x4
+condition: $f
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        fake_event!(Signed, (".data.flags", -2i64));
+        fake_event!(Float, (".data.flags", 4.0f64));
+        assert!(matches!(
+            cr.match_event(&(Signed {}), None).unwrap_err().kind,
+            ErrorKind::Eval(matcher::Error::IncompatibleTypes { .. })
+        ));
+        assert!(matches!(
+            cr.match_event(&(Float {}), None).unwrap_err().kind,
+            ErrorKind::Eval(matcher::Error::IncompatibleTypes { .. })
+        ));
+    }
+
+    #[test]
+    fn test_regression_flag_float_value() {
+        let test = r#"
+---
+name: test
+matches:
+    $f: .data.flags &= 4.0
+condition: $f
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        assert!(CompiledRule::try_from(d).is_err());
+    }
+
+    #[test]
     fn test_unknown_fields() {
         let test = r#"
 ---
