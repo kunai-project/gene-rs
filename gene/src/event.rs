@@ -114,7 +114,7 @@ impl<'f> FieldNameIterator<'f> {
     /// ```
     #[inline(always)]
     pub fn is_terminal(&self) -> bool {
-        self.i.unwrap_or_default() == self.field_names.len() - 1
+        self.i.unwrap_or_default() + 1 == self.field_names.len()
     }
 }
 
