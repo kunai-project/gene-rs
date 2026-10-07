@@ -51,7 +51,6 @@
 use std::{
     borrow::Cow,
     num::{ParseFloatError, ParseIntError, TryFromIntError},
-    ops::BitAnd,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -204,27 +203,6 @@ impl Number {
             (Self::Uint(s), Self::Uint(o)) => Some(Self::Uint(s & o)),
             _ => None,
         }
-    }
-}
-
-impl BitAnd for Number {
-    type Output = Self;
-
-    #[inline(always)]
-    fn bitand(self, rhs: Self) -> Self::Output {
-        if let (Self::Int(s), Self::Int(o)) = (&self, &rhs) {
-            return Self::Int(s & o);
-        }
-
-        if let (Self::Uint(s), Self::Uint(o)) = (&self, &rhs) {
-            return Self::Uint(s & o);
-        }
-
-        if matches!(self, Self::Float(_)) || matches!(rhs, Self::Float(_)) {
-            panic!("cannot bitand floats")
-        }
-
-        panic!("numbers needs to be of the same type")
     }
 }
 
@@ -641,8 +619,9 @@ mod test {
         assert!(f.is_float());
 
         let e = Number::from(0x40_u32);
-        assert!(Number::from(0x100040) & e == e);
-        assert!(Number::from(0x100020) & e != e);
+        assert_eq!(Number::from(0x100040).checked_bitand(e), Some(e));
+        
+        assert_ne!(Number::from(0x100020).checked_bitand(e), Some(e));
 
         assert_eq!(Number::from_str("-1").unwrap(), Number::from(-1));
         assert_eq!(Number::from_str("0.41").unwrap(), Number::from(0.41));
