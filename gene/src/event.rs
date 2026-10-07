@@ -114,7 +114,7 @@ impl<'f> FieldNameIterator<'f> {
     /// ```
     #[inline(always)]
     pub fn is_terminal(&self) -> bool {
-        self.i.unwrap_or_default() == self.field_names.len() - 1
+        self.i.unwrap_or_default() + 1 == self.field_names.len()
     }
 }
 
@@ -624,6 +624,12 @@ mod test {
         // Test accessing non-existing nested keys
         assert_eq!(test_struct.get_from_path(&path!(".data.unknown")), None);
         assert_eq!(test_struct.get_from_path(&path!(".metadata.missing")), None);
+    }
+
+    #[test]
+    fn test_regression_is_terminal_empty() {
+        let iter = FieldNameIterator::from(&[] as &[String]);
+        assert!(!iter.is_terminal());
     }
 
     #[test]
