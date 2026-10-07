@@ -599,6 +599,16 @@ impl TryFrom<Rule> for CompiledRule {
 }
 
 impl CompiledRule {
+    pub(crate) fn bind_rule_dependencies(&mut self, names: &HashMap<String, usize>) {
+        for (_, operand) in &mut self.operands {
+            if let Match::Rule(dependency) = operand {
+                if let Some(&index) = names.get(dependency.rule_name()) {
+                    dependency.set_rule_index(index);
+                }
+            }
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn match_event<E>(
         &self,

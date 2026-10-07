@@ -637,6 +637,11 @@ where
     }
 
     #[inline]
+    pub(crate) fn match_rule_index(&mut self, index: usize) -> Result<bool, matcher::Error> {
+        Ok(self.match_rule_at(index)?)
+    }
+
+    #[inline]
     pub(crate) fn match_rule(&mut self, name: &str) -> Result<bool, matcher::Error> {
         let idx = *self
             .names
@@ -669,6 +674,7 @@ impl Engine {
 
     #[inline(always)]
     pub(crate) fn insert_compiled(&mut self, mut r: CompiledRule) {
+        r.bind_rule_dependencies(&self.names);
         // dependencies are always inserted before their dependents
         for d in r.depends.iter() {
             if let Some(&i) = self.names.get(d) {
@@ -1938,6 +1944,7 @@ condition: $dep
         results.insert(1, &Ok(false));
         assert_eq!(results.get(1), Some(Ok(false)));
     }
+
     #[test]
     fn bound_groups_preserve_short_circuit_order() {
         let mut e = engine(

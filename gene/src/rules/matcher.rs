@@ -281,15 +281,11 @@ impl IndirectMatch {
     {
         let src = event
             .get_from_path(&self.field_path)
-            .ok_or(Error::FieldNotFound(
-                self.field_path.to_string_lossy().into(),
-            ))?;
+            .ok_or_else(|| Error::FieldNotFound(self.field_path.to_string_lossy().into()))?;
 
         let tgt = event
             .get_from_path(&self.other_field)
-            .ok_or(Error::FieldNotFound(
-                self.other_field.to_string_lossy().into(),
-            ))?;
+            .ok_or_else(|| Error::FieldNotFound(self.other_field.to_string_lossy().into()))?;
 
         Ok(src == tgt)
     }
@@ -545,8 +541,10 @@ impl DirectMatch {
     }
 }
 
+/// Reference to another rule's result. The second field is the referenced
+/// rule's index in the engine, set by [`Engine`](crate::Engine) on insertion.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RuleMatch(String);
+pub(crate) struct RuleMatch(String, Option<usize>);
 
 impl RuleMatch {
     #[inline]
@@ -555,7 +553,7 @@ impl RuleMatch {
         let mut out = None;
         for pair in pair.into_inner() {
             match pair.as_rule() {
-                Rule::rule_name => out = Some(RuleMatch(pair.as_str().into())),
+                Rule::rule_name => out = Some(RuleMatch(pair.as_str().into(), None)),
                 // grammar doesn't allow anything else
                 _ => unreachable!(),
             }
@@ -568,15 +566,21 @@ impl RuleMatch {
     where
         E: for<'e> Event<'e>,
     {
-        match ctx {
-            Some(ctx) => ctx.match_rule(&self.0),
-            None => Err(Error::DependencyUnresolved(self.0.clone())),
+        match (ctx, self.1) {
+            (Some(ctx), Some(i)) => ctx.match_rule_index(i),
+            (Some(ctx), None) => ctx.match_rule(&self.0),
+            (None, _) => Err(Error::DependencyUnresolved(self.0.clone())),
         }
     }
 
     #[inline(always)]
     pub(crate) fn rule_name(&self) -> &str {
         &self.0
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_rule_index(&mut self, i: usize) {
+        self.1 = Some(i);
     }
 }
 
@@ -721,12 +725,12 @@ mod test {
 
         assert_eq!(
             as_rule_match(MatchParser::parse_input("rule(test)").unwrap()),
-            RuleMatch("test".into())
+            RuleMatch("test".into(), None)
         );
 
         assert_eq!(
             as_rule_match(MatchParser::parse_input("rule(blip.blop)").unwrap()),
-            RuleMatch("blip.blop".into())
+            RuleMatch("blip.blop".into(), None)
         )
     }
 }
