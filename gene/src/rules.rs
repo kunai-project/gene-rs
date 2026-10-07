@@ -828,6 +828,26 @@ condition: $b
     }
 
     #[test]
+    fn test_dependency_without_engine() {
+        let test = r#"
+---
+name: test
+matches:
+    $d: rule(dep)
+condition: $d
+..."#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        let cr = CompiledRule::try_from(d).unwrap();
+
+        fake_event!(Dummy, (".data.exe.size", "43"));
+        assert_eq!(
+            cr.match_event(&(Dummy {}), None).unwrap_err().kind,
+            ErrorKind::Eval(matcher::Error::DependencyUnresolved("dep".into()))
+        );
+    }
+
+    #[test]
     fn test_unknown_fields() {
         let test = r#"
 ---

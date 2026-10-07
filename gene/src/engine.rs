@@ -1234,6 +1234,33 @@ condition: $cmd && $dep
     }
 
     #[test]
+    fn test_lazy_dep_other_event() {
+        let mut e = engine(
+            r#"
+name: dep.target
+type: dependency
+match-on:
+    events:
+        test: [ 2 ]
+matches:
+    $t: .target ~= '^/etc/'
+condition: $t
+---
+name: susp.filemod.cli
+matches:
+    $cmd: .cmd ~= '(chmod|chattr)'
+    $dep: rule(dep.target)
+condition: $cmd && $dep
+"#,
+        );
+
+        let ev = Recorder::new(&[(".cmd", "chmod"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.includes_detection("susp.filemod.cli"));
+        assert_eq!(*ev.accesses.borrow(), vec![".cmd".to_string()]);
+    }
+
+    #[test]
     fn test_lazy_dep_shared() {
         let mut e = engine(&format!(
             r#"{DEP_TARGET}
