@@ -1286,6 +1286,39 @@ condition: $dep and $first
     }
 
     #[test]
+    fn test_detection_as_dep() {
+        let mut e = engine(
+            r#"
+name: chmod
+matches:
+    $cmd: .cmd ~= 'chmod'
+condition: $cmd
+---
+name: a.chmod.etc
+matches:
+    $chmod: rule(chmod)
+    $t: .target ~= '^/etc/'
+condition: $chmod and $t
+---
+name: z.chmod.tmp
+matches:
+    $chmod: rule(chmod)
+    $t: .target ~= '^/tmp/'
+condition: $chmod or $t
+"#,
+        );
+
+        let ev = Recorder::new(&[(".cmd", "chmod"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("chmod"));
+        assert!(sr.includes_detection("a.chmod.etc"));
+        assert!(sr.includes_detection("z.chmod.tmp"));
+        assert_eq!(ev.count(".cmd"), 1);
+        assert!(e.rules[e.names["chmod"]].is_dep);
+        assert!(!e.rules[e.names["a.chmod.etc"]].is_dep);
+    }
+
+    #[test]
     fn test_lazy_dep_nested() {
         let mut e = engine(&format!(
             r#"{DEP_TARGET}

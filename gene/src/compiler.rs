@@ -262,6 +262,15 @@ condition: any of them
         c.load_rules_from_str(chain(MAX_DEPENDENCY_DEPTH + 1))
             .unwrap();
         assert!(matches!(c.compile(), Err(Error::DependencyTooDeep(_))));
+
+        // the deepest dependency counts, not the first or last one
+        let mut c = Compiler::new();
+        c.load_rules_from_str(format!(
+            "{}---\nname: top\nmatches:\n  $a: rule(r0)\n  $b: rule(r{MAX_DEPENDENCY_DEPTH})\n  $c: rule(r1)\ncondition: $a and $b and $c\n",
+            chain(MAX_DEPENDENCY_DEPTH)
+        ))
+        .unwrap();
+        assert!(matches!(c.compile(), Err(Error::DependencyTooDeep(r)) if r == "top"));
     }
 
     #[test]
