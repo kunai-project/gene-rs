@@ -56,7 +56,7 @@ impl Default for Expr {
     }
 }
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum Error {
     #[error("unknown operand {0}")]
     UnknowOperand(String),

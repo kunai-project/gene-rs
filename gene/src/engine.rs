@@ -563,10 +563,9 @@ pub struct Engine {
     rules_cache: HashMap<(Cow<'static, str>, i64), RuleCacheEntry>,
 }
 
-#[derive(Clone, Copy)]
 enum DepState {
     Match(bool),
-    Error,
+    Error(rules::Error),
 }
 
 /// Evaluates rules on demand during a scan, memoizing each result so that a
@@ -576,29 +575,25 @@ pub(crate) struct ScanContext<'a, E> {
     names: &'a HashMap<String, usize>,
     event: &'a E,
     states: HashMap<usize, DepState>,
-    first_err: Option<rules::Error>,
 }
 
 impl<'a, E> ScanContext<'a, E>
 where
     E: for<'e> Event<'e>,
 {
-    fn match_rule_at(&mut self, idx: usize) -> Result<bool, matcher::Error> {
+    fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
         let rules = self.rules;
         let r = &rules[idx];
 
         // not a dependency -> evaluate rule
         if !r.is_dep {
-            return r.match_event(self.event, Some(self)).map_err(|e| {
-                self.first_err.get_or_insert(e);
-                matcher::Error::dependency_failed(&r.name)
-            });
+            return r.match_event(self.event, Some(self));
         }
 
         // check if rule was already evaluated
         match self.states.get(&idx) {
             Some(DepState::Match(ok)) => return Ok(*ok),
-            Some(DepState::Error) => return Err(matcher::Error::dependency_failed(&r.name)),
+            Some(DepState::Error(e)) => return Err(e.clone()),
             None => {}
         }
 
@@ -613,10 +608,8 @@ where
                 Ok(ok)
             }
             Err(e) => {
-                self.states.insert(idx, DepState::Error);
-                // keep the first error, later ones may only wrap a failed dependency
-                self.first_err.get_or_insert(e);
-                Err(matcher::Error::dependency_failed(&r.name))
+                self.states.insert(idx, DepState::Error(e.clone()));
+                Err(e)
             }
         }
     }
@@ -626,8 +619,8 @@ where
         let idx = *self
             .names
             .get(name)
-            .ok_or_else(|| matcher::Error::rule_not_found(name))?;
-        self.match_rule_at(idx)
+            .ok_or_else(|| matcher::Error::dependency_not_found(name))?;
+        Ok(self.match_rule_at(idx)?)
     }
 }
 
@@ -751,13 +744,15 @@ impl Engine {
                     .expect("cache_rules always inserts an entry for (source, id)")
             }
         };
+
         let mut ctx = ScanContext {
             rules: &self.rules,
             names: &self.names,
             event,
             states: HashMap::new(),
-            first_err: None,
         };
+
+        let mut first_err = None;
 
         // we iterate over each because we don't want exclude rules from filter
         // exclude to impact detection include and vice versa
@@ -767,7 +762,10 @@ impl Engine {
                 // NB: a rule may also be a dependency, so it goes through the
                 // memoizing scan context; can_match_on was already checked by cache_rules
                 // and errors are recorded in first_err
-                let ok = ctx.match_rule_at(i).unwrap_or(false);
+                let ok = ctx.match_rule_at(i).unwrap_or_else(|e| {
+                    first_err.get_or_insert(e);
+                    false
+                });
 
                 // we process scan result
                 if ok {
@@ -781,7 +779,7 @@ impl Engine {
             }
         }
 
-        if let Some(err) = ctx.first_err {
+        if let Some(err) = first_err {
             return Err((sr, err).into());
         }
 
@@ -1317,6 +1315,39 @@ condition: $cmd && !$dep
         let err = e.scan(&ev).unwrap_err();
         assert!(!err.0.includes_detection("rule"));
         assert!(err.1.to_string().contains(".missing"), "{}", err.1);
+        assert_eq!(ev.count(".missing"), 1);
+    }
+
+    #[test]
+    fn test_lazy_dep_cached_error() {
+        let e = engine(
+            r#"
+name: dep.err
+type: dependency
+matches:
+    $m: .missing == 'x'
+condition: $m
+---
+name: rule
+matches:
+    $dep: rule(dep.err)
+condition: $dep
+"#,
+        );
+
+        let ev = Recorder::new(&[]);
+        let mut ctx = ScanContext {
+            rules: &e.rules,
+            names: &e.names,
+            event: &ev,
+            states: HashMap::new(),
+        };
+
+        let first = ctx.match_rule("dep.err").unwrap_err();
+        assert!(first.to_string().contains(".missing"), "{first}");
+
+        // the cached error is the original one
+        assert_eq!(ctx.match_rule("dep.err").unwrap_err(), first);
         assert_eq!(ev.count(".missing"), 1);
     }
 

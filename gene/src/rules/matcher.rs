@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::{
     engine::ScanContext,
+    rules,
     values::{Number, NumberError},
     Event, FieldValue,
 };
@@ -109,12 +110,12 @@ impl MatchValue {
     }
 }
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum Error {
-    #[error("rule={0} not found")]
-    RuleNotFound(String),
-    #[error("dependency rule={0} failed")]
-    DependencyFailed(String),
+    #[error("dependency rule={0} not found")]
+    DependencyNotFound(String),
+    #[error("dependency rule={0} cannot be resolved without an engine")]
+    DependencyUnresolved(String),
     #[error("field={0} not found")]
     FieldNotFound(String),
     #[error("incompatible types field={path} expect={expect} got={got}")]
@@ -131,6 +132,14 @@ pub enum Error {
     ParseNum(#[from] NumberError),
     #[error("{0}")]
     Regex(#[from] regex::Error),
+    #[error("dependency: {0}")]
+    Rule(Box<rules::Error>),
+}
+
+impl From<rules::Error> for Error {
+    fn from(value: rules::Error) -> Self {
+        Self::Rule(Box::new(value))
+    }
 }
 
 impl Error {
@@ -145,13 +154,8 @@ impl Error {
     }
 
     #[inline(always)]
-    pub(crate) fn rule_not_found<S: AsRef<str>>(s: S) -> Self {
-        Self::RuleNotFound(s.as_ref().into())
-    }
-
-    #[inline(always)]
-    pub(crate) fn dependency_failed<S: AsRef<str>>(s: S) -> Self {
-        Self::DependencyFailed(s.as_ref().into())
+    pub(crate) fn dependency_not_found<S: AsRef<str>>(s: S) -> Self {
+        Self::DependencyNotFound(s.as_ref().into())
     }
 }
 
@@ -540,7 +544,7 @@ impl RuleMatch {
     {
         match ctx {
             Some(ctx) => ctx.match_rule(&self.0),
-            None => Err(Error::rule_not_found(&self.0)),
+            None => Err(Error::DependencyUnresolved(self.0.clone())),
         }
     }
 

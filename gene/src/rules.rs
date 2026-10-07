@@ -15,7 +15,7 @@
 //! - [`CompiledRule`]: Optimized, executable (by the engine) rule representation
 //! - [`Decision`]: Include/exclude decision enum
 //! - [`Type`]: Rule type enum (detection, filter, dependency)
-//! - [`enum@Error`]: Rule compilation and processing errors
+//! - [`struct@Error`]: Rule compilation and processing errors
 
 use self::{attack::AttackId, condition::Condition, matcher::Match};
 use crate::{engine::ScanContext, map::deserialize_uk_hashmap, template::Templates, Event};
@@ -441,7 +441,7 @@ impl Rule {
         let filters = self.match_on.and_then(|mo| mo.events).unwrap_or_default();
 
         // to wrap error with rule name
-        || -> Result<CompiledRule, Error> {
+        || -> Result<CompiledRule, ErrorKind> {
             let mut c = CompiledRule {
                 name: self.name,
                 ty: self.ty.unwrap_or_default(),
@@ -455,9 +455,7 @@ impl Rule {
                 exclude_events: Self::build_exclude_events(&filters),
                 matches: HashMap::new(),
                 condition: match self.condition {
-                    Some(cond) => {
-                        Condition::from_str(&cond).map_err(|e| Error::from(Box::new(e)))?
-                    }
+                    Some(cond) => Condition::from_str(&cond).map_err(Box::new)?,
                     None => Condition::default(),
                 },
                 severity: bound_severity(self.severity.unwrap_or_default()),
@@ -474,7 +472,7 @@ impl Rule {
                     // we make sure attack id is correct
                     for r in attack.iter().map(AttackId::parse) {
                         c.attack
-                            .insert(r.map_err(|e| Error::Compile(e.to_string()))?.into());
+                            .insert(r.map_err(|e| ErrorKind::Compile(e.to_string()))?.into());
                     }
                 }
             }
@@ -483,7 +481,7 @@ impl Rule {
             if let Some(matches) = self.matches {
                 for (operand, s) in matches.iter() {
                     if !operand.starts_with('$') {
-                        return Err(Error::Compile(format!(
+                        return Err(ErrorKind::Compile(format!(
                             "operand must start with $, try with ${operand}"
                         )));
                     }
@@ -498,7 +496,7 @@ impl Rule {
 
             Ok(c)
         }()
-        .map_err(|e| e.wrap(name))
+        .map_err(|kind| Error { rule: name, kind })
     }
 }
 
@@ -551,20 +549,21 @@ pub struct CompiledRule {
 
 /// Error types that can occur during rule processing and compilation.
 ///
-/// This enum represents all possible errors that can occur when working with rules,
-/// including parsing, compilation, and evaluation errors. Errors can be wrapped
-/// to provide context about where they occurred in the rule processing pipeline.
-#[derive(Debug, Error, PartialEq)]
-pub enum Error {
-    /// Wrapped error with additional context.
-    ///
-    /// This variant is used to add contextual information about where an error
-    /// occurred, typically including the rule name and the underlying error.
-    /// The first string parameter is the rule name, and the second is a boxed
-    /// error that occurred during processing that rule.
-    #[error("rule={0} {1}")]
-    Wrap(String, Box<Error>),
+/// Every error carries the name of the rule it occurred in, and its
+/// [`ErrorKind`]. Errors in a dependency are chained: the kind of the
+/// depending rule's error wraps the dependency's error.
+#[derive(Debug, Clone, Error, PartialEq)]
+#[error("rule={rule} {kind}")]
+pub struct Error {
+    /// Name of the rule the error occurred in.
+    pub rule: String,
+    /// What went wrong.
+    pub kind: ErrorKind,
+}
 
+/// The kinds of errors that can occur when compiling or evaluating a rule.
+#[derive(Debug, Clone, Error, PartialEq)]
+pub enum ErrorKind {
     /// Compilation error that occurred during rule processing.
     ///
     /// This variant represents errors that occur when compiling.
@@ -575,36 +574,18 @@ pub enum Error {
 
     /// Error that occurred while parsing match expressions.
     ///
-    /// This variant is used when there are syntax errors or invalid patterns
-    /// in rule match expressions. It wraps errors from the matcher module.
+    /// This variant is only produced at compile time, when there are syntax
+    /// errors or invalid patterns in rule match expressions.
     #[error("{0}")]
-    ParseMatch(#[from] matcher::Error),
+    Match(#[from] matcher::Error),
 
-    /// Error that occurred while evaluating rule conditions.
+    /// Error that occurred while evaluating a rule against an event.
     ///
-    /// This variant represents errors in rule condition evaluation, such as
-    /// invalid operators, type mismatches, or missing fields. It wraps errors
-    /// from the condition evaluation module.
+    /// This variant covers all evaluation errors, such as invalid operators,
+    /// type mismatches, missing fields, or failing dependencies. Errors
+    /// raised by matchers during evaluation are wrapped here too.
     #[error("{0}")]
     Condition(#[from] Box<condition::Error>),
-}
-
-impl Error {
-    fn wrap(self, name: String) -> Self {
-        Self::Wrap(name, Box::new(self))
-    }
-
-    /// Returns the innermost wrapped error.
-    ///
-    /// This method unwraps nested `Wrap` variants to return the underlying error,
-    /// which is useful for error handling and reporting. If this error is not a
-    /// `Wrap` variant, it returns itself.
-    pub fn wrapped(&self) -> &Self {
-        match self {
-            Self::Wrap(_, e) => e,
-            _ => self,
-        }
-    }
 }
 
 impl TryFrom<Rule> for CompiledRule {
@@ -626,8 +607,10 @@ impl CompiledRule {
     {
         self.condition
             .compute_for_event(event, &self.matches, ctx)
-            .map_err(|e| Box::new(e).into())
-            .map_err(|e: Error| e.wrap(self.name.clone()))
+            .map_err(|e| Error {
+                rule: self.name.clone(),
+                kind: ErrorKind::Condition(Box::new(e)),
+            })
     }
 
     #[inline(always)]
@@ -837,7 +820,7 @@ condition: $b
         fake_event!(Dummy, (".data.exe.size", "42*3"));
         assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
-            matches!(e.wrapped(), Error::Condition(_))
+            matches!(e.kind, ErrorKind::Condition(_))
         }));
     }
 
@@ -857,7 +840,7 @@ condition: $b
         fake_event!(Dummy, (".data.exe.size", "43"));
         assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
-            matches!(e.wrapped(), Error::Condition(_))
+            matches!(e.kind, ErrorKind::Condition(_))
         }));
     }
 
@@ -877,7 +860,7 @@ condition: $c
         fake_event!(Dummy, (".data.exe.size", "43"));
         assert!(cr.match_event(&(Dummy {}), None).is_err_and(|e| {
             eprintln!("{e}");
-            matches!(e.wrapped(), Error::Condition(_))
+            matches!(e.kind, ErrorKind::Condition(_))
         }));
     }
 
