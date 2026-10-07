@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    hint::black_box,
     io::{self, Read},
 };
 
@@ -80,7 +81,7 @@ fn bench_rust_events(c: &mut Criterion) {
         group.bench_function(format!("scan-with-{}-rules", engine.rules_count()), |b| {
             b.iter(|| {
                 for e in events.iter() {
-                    let _ = engine.scan(e);
+                    let _ = black_box(engine.scan(e));
                 }
             })
         });
