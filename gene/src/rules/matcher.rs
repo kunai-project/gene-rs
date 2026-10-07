@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, str::FromStr};
+use std::str::FromStr;
 
 use pest::{
     error::ErrorVariant,
@@ -10,6 +10,8 @@ use regex::Regex;
 use thiserror::Error;
 
 use crate::{
+    engine::ScanContext,
+    rules,
     values::{Number, NumberError},
     Event, FieldValue,
 };
@@ -53,7 +55,7 @@ impl MatchParser {
     }
 
     #[inline]
-    fn parse_input<S: AsRef<str>>(input: S) -> Result<Match, Error> {
+    fn parse_input<S: AsRef<str>>(input: S) -> Result<Match, ParseError> {
         let mut pairs = MatchParser::parse(Rule::matcher, input.as_ref()).map_err(Box::new)?;
         match pairs.next() {
             Some(pair) => {
@@ -67,9 +69,9 @@ impl MatchParser {
                             IndirectMatch::from_str(input.as_ref()).map(Match::from)
                         }
                         Rule::rule_match => Ok(Match::from(RuleMatch::from_pair(pair))),
-                        _ => Err(Error::parser("unknown match format", pair.as_span())),
+                        _ => Err(ParseError::new("unknown match format", pair.as_span())),
                     },
-                    _ => Err(Error::parser("match empty inner pairs", span)),
+                    _ => Err(ParseError::new("match empty inner pairs", span)),
                 }
             }
             _ => unreachable!(),
@@ -108,31 +110,26 @@ impl MatchValue {
     }
 }
 
-#[derive(Error, Debug, PartialEq)]
-pub enum Error {
-    #[error("rule={0} not found")]
-    RuleNotFound(String),
-    #[error("field={0} not found")]
-    FieldNotFound(String),
-    #[error("incompatible types field={path} expect={expect} got={got}")]
-    IncompatibleTypes {
-        path: String,
-        expect: &'static str,
-        got: &'static str,
-    },
+/// Error raised while parsing a match expression.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum ParseError {
+    /// Invalid field path.
     #[error("{0}")]
     Path(#[from] PathError),
+    /// Syntax error in the match expression.
     #[error("{0}")]
     Parser(#[from] Box<pest::error::Error<Rule>>),
+    /// Invalid number value.
     #[error("{0}")]
     ParseNum(#[from] NumberError),
+    /// Invalid regular expression.
     #[error("{0}")]
     Regex(#[from] regex::Error),
 }
 
-impl Error {
+impl ParseError {
     #[inline]
-    fn parser<S: ToString>(msg: S, span: Span<'_>) -> Self {
+    fn new<S: ToString>(msg: S, span: Span<'_>) -> Self {
         Self::Parser(Box::new(pest::error::Error::new_from_span(
             ErrorVariant::CustomError {
                 message: msg.to_string(),
@@ -140,19 +137,54 @@ impl Error {
             span,
         )))
     }
+}
 
+/// Error raised while matching an event.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum Error {
+    /// A `rule(name)` operand references a rule unknown to the engine.
+    #[error("dependency rule={0} not found")]
+    DependencyNotFound(String),
+    /// A `rule(name)` operand was evaluated outside of an engine scan.
+    #[error("dependency rule={0} cannot be resolved without an engine")]
+    DependencyUnresolved(String),
+    /// The event has no field at this path.
+    #[error("field={0} not found")]
+    FieldNotFound(String),
+    /// The event field's type doesn't match the value in the rule.
+    #[error("incompatible types field={path} expect={expect} got={got}")]
+    IncompatibleTypes {
+        /// Path of the field.
+        path: String,
+        /// Type expected by the rule.
+        expect: &'static str,
+        /// Type of the event field.
+        got: &'static str,
+    },
+    /// A dependency failed; wraps its error.
+    #[error("dependency: {0}")]
+    Rule(Box<rules::Error>),
+}
+
+impl From<rules::Error> for Error {
+    fn from(value: rules::Error) -> Self {
+        Self::Rule(Box::new(value))
+    }
+}
+
+impl Error {
     #[inline(always)]
-    fn rule_not_found<S: AsRef<str>>(s: S) -> Self {
-        Self::RuleNotFound(s.as_ref().into())
+    pub(crate) fn dependency_not_found<S: AsRef<str>>(s: S) -> Self {
+        Self::DependencyNotFound(s.as_ref().into())
     }
 }
 
 impl MatchValue {
-    fn value_regex(s: &str) -> Result<Self, Error> {
+    fn value_regex(s: &str) -> Result<Self, ParseError> {
         Regex::new(s).map(Self::Regex).map_err(|e| e.into())
     }
 
-    fn value_number<S: AsRef<str>>(s: S) -> Result<Self, Error> {
+    fn value_number<S: AsRef<str>>(s: S) -> Result<Self, ParseError> {
         let s = s.as_ref();
         Ok(MatchValue::Number(Number::from_str(s)?))
     }
@@ -185,7 +217,7 @@ impl From<RuleMatch> for Match {
 }
 
 impl FromStr for Match {
-    type Err = Error;
+    type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         MatchParser::parse_input(s)
     }
@@ -196,7 +228,7 @@ impl Match {
     pub(crate) fn match_event<E>(
         &self,
         event: &E,
-        rule_state: &HashMap<Cow<'_, str>, bool>,
+        ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, Error>
     where
         E: for<'e> Event<'e>,
@@ -204,7 +236,7 @@ impl Match {
         match self {
             Self::Direct(m) => m.match_event(event),
             Self::Indirect(m) => m.match_event(event),
-            Self::Rule(m) => m.match_event(rule_state),
+            Self::Rule(m) => m.match_event(ctx),
         }
     }
 }
@@ -218,7 +250,7 @@ pub(crate) struct IndirectMatch {
 }
 
 impl FromStr for IndirectMatch {
-    type Err = Error;
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut pairs = MatchParser::parse(Rule::indirect_match, s).map_err(Box::new)?;
@@ -307,7 +339,7 @@ pub(crate) struct DirectMatch {
 }
 
 impl MatchValue {
-    fn from_pair(op: Op, pair: Pair<'_, Rule>) -> Result<Self, Error> {
+    fn from_pair(op: Op, pair: Pair<'_, Rule>) -> Result<Self, ParseError> {
         debug_assert_eq!(pair.as_rule(), Rule::value);
 
         // this cannot panic as value must have at least one inner pair
@@ -341,20 +373,20 @@ impl MatchValue {
                 let num_str = inner_pair.as_str().trim_matches('\'').trim_matches('"');
                 match inner_pair.as_rule() {
                     Rule::number | Rule::hex => MatchValue::value_number(num_str),
-                    _ => Err(Error::parser("value must be a number", span)),
+                    _ => Err(ParseError::new("value must be a number", span)),
                 }
             }
             Op::Rex => match inner_pair.as_rule() {
                 Rule::value_dq => MatchValue::value_regex(inner_pair.as_str().trim_matches('"')),
                 Rule::value_sq => MatchValue::value_regex(inner_pair.as_str().trim_matches('\'')),
-                _ => Err(Error::parser("value must be a quoted string", span)),
+                _ => Err(ParseError::new("value must be a quoted string", span)),
             },
         }
     }
 }
 
 impl FromStr for DirectMatch {
-    type Err = Error;
+    type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let pairs = MatchParser::parse(Rule::_direct_match, s).map_err(Box::new)?;
 
@@ -526,11 +558,14 @@ impl RuleMatch {
     }
 
     #[inline]
-    pub(crate) fn match_event(&self, states: &HashMap<Cow<'_, str>, bool>) -> Result<bool, Error> {
-        states
-            .get(&Cow::from(&self.0))
-            .copied()
-            .ok_or(Error::rule_not_found(&self.0))
+    pub(crate) fn match_event<E>(&self, ctx: Option<&mut ScanContext<'_, E>>) -> Result<bool, Error>
+    where
+        E: for<'e> Event<'e>,
+    {
+        match ctx {
+            Some(ctx) => ctx.match_rule(&self.0),
+            None => Err(Error::DependencyUnresolved(self.0.clone())),
+        }
     }
 
     #[inline(always)]

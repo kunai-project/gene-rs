@@ -1,11 +1,12 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    hint::black_box,
     io::{self, Read},
 };
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
-use gene::{Compiler, Engine, Event, FieldGetter, FieldValue, Rule, FieldNameIterator};
+use gene::{Compiler, Engine, Event, FieldGetter, FieldNameIterator, FieldValue, Rule};
 use gene_derive::{Event, FieldGetter};
 use libflate::gzip;
 use serde::{Deserialize, Deserializer};
@@ -80,7 +81,7 @@ fn bench_rust_events(c: &mut Criterion) {
         group.bench_function(format!("scan-with-{}-rules", engine.rules_count()), |b| {
             b.iter(|| {
                 for e in events.iter() {
-                    let _ = engine.scan(e);
+                    let _ = black_box(engine.scan(e));
                 }
             })
         });
@@ -130,5 +131,45 @@ fn bench_engine_build(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_rust_events, bench_engine_build);
+#[derive(Event, FieldGetter)]
+#[event(id = 1, source = Cow::from("bench"))]
+struct DepEvent {
+    a: String,
+    cmd: String,
+}
+
+// Detection rules guarded by a cheap `.cmd` check and sharing the top of a
+// diamond ladder, so `cmd` decides whether the dependencies are reached.
+fn bench_scan_deps(c: &mut Criterion) {
+    let depth = 16;
+    let mut rules = diamond_ladder(depth);
+    for i in 0..10 {
+        rules.push_str(&format!(
+            "---\nname: top{i}\nmatches:\n  $c: .cmd == 'chmod'\n  $d: rule(l{depth})\ncondition: $c and $d\n"
+        ));
+    }
+
+    let mut compiler = Compiler::new();
+    compiler.load_rules_from_str(rules).unwrap();
+    let mut engine = Engine::try_from(compiler).unwrap();
+
+    let mut group = c.benchmark_group("scan-deps");
+    for cmd in ["ls", "chmod"] {
+        let event = DepEvent {
+            a: "x".into(),
+            cmd: cmd.into(),
+        };
+        group.bench_function(format!("diamond-depth-{depth}-cmd-{cmd}"), |b| {
+            b.iter(|| engine.scan(&event).unwrap().includes_detection("top0"))
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_rust_events,
+    bench_engine_build,
+    bench_scan_deps
+);
 criterion_main!(benches);

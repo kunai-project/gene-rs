@@ -63,7 +63,7 @@ use thiserror::Error;
 /// This enum represents all possible errors that can occur when working with
 /// numeric values in the engine, including parsing from strings, converting
 /// between numeric types, and handling type mismatches.
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Clone, Error, PartialEq)]
 pub enum NumberError {
     /// Invalid conversion between numeric types.
     ///

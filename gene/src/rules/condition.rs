@@ -1,7 +1,8 @@
 use super::matcher::{self, Match};
+use crate::engine::ScanContext;
 use crate::Event;
 use pest::{iterators::Pairs, pratt_parser::PrattParser, Parser};
-use std::{borrow::Cow, collections::HashMap, hash::Hash, str::FromStr};
+use std::{collections::HashMap, hash::Hash, str::FromStr};
 use thiserror::Error;
 
 #[derive(pest_derive::Parser)]
@@ -55,18 +56,19 @@ impl Default for Expr {
     }
 }
 
-#[derive(Error, Debug, PartialEq)]
-pub enum Error {
+/// Error raised while parsing a condition.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum ParseError {
+    /// The condition references an operand not defined in `matches`.
     #[error("unknown operand {0}")]
-    UnknowOperand(String),
+    UnknownOperand(String),
+    /// Syntax error in the condition.
     #[error("{0}")]
     Parser(#[from] Box<pest::error::Error<Rule>>),
-    #[error("{0}")]
-    Matcher(#[from] matcher::Error),
 }
 
 impl FromStr for Expr {
-    type Err = Error;
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() {
@@ -87,15 +89,15 @@ impl Expr {
         &self,
         event: &E,
         operands: &HashMap<String, Match>,
-        rule_states: &HashMap<Cow<'_, str>, bool>,
-    ) -> Result<bool, Error>
+        mut ctx: Option<&mut ScanContext<'_, E>>,
+    ) -> Result<bool, matcher::Error>
     where
         E: for<'e> Event<'e>,
     {
         match self {
             Expr::AllOfThem => {
                 for m in operands.values() {
-                    if !m.match_event(event, rule_states)? {
+                    if !m.match_event(event, ctx.as_deref_mut())? {
                         return Ok(false);
                     }
                 }
@@ -107,7 +109,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if !m.match_event(event, rule_states)? {
+                    if !m.match_event(event, ctx.as_deref_mut())? {
                         return Ok(false);
                     }
                 }
@@ -116,7 +118,7 @@ impl Expr {
             Expr::NOfThem(n) => {
                 let mut c = 0;
                 for m in operands.values() {
-                    if m.match_event(event, rule_states)? {
+                    if m.match_event(event, ctx.as_deref_mut())? {
                         c += 1;
                         if c >= *n {
                             return Ok(true);
@@ -132,7 +134,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if m.match_event(event, rule_states)? {
+                    if m.match_event(event, ctx.as_deref_mut())? {
                         c += 1;
                         if c >= *n {
                             return Ok(true);
@@ -143,7 +145,7 @@ impl Expr {
             }
             Expr::AnyOfThem => {
                 for m in operands.values() {
-                    if m.match_event(event, rule_states)? {
+                    if m.match_event(event, ctx.as_deref_mut())? {
                         return Ok(true);
                     }
                 }
@@ -155,7 +157,7 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if m.match_event(event, rule_states)? {
+                    if m.match_event(event, ctx.as_deref_mut())? {
                         return Ok(true);
                     }
                 }
@@ -163,7 +165,7 @@ impl Expr {
             }
             Expr::NoneOfThem => {
                 for m in operands.values() {
-                    if m.match_event(event, rule_states)? {
+                    if m.match_event(event, ctx.as_deref_mut())? {
                         return Ok(false);
                     }
                 }
@@ -175,32 +177,55 @@ impl Expr {
                     .filter(|(v, _)| v.starts_with(start))
                     .map(|(_, m)| m)
                 {
-                    if m.match_event(event, rule_states)? {
+                    if m.match_event(event, ctx.as_deref_mut())? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
-            Expr::Variable(var) => {
-                if let Some(m) = operands.get(var) {
-                    return m.match_event(event, rule_states).map_err(|e| e.into());
-                }
-                Err(Error::UnknowOperand(var.into()))
-            }
-            Expr::BinOp { lhs, op, rhs } => match op {
-                Op::And => Ok(lhs.compute_for_event(event, operands, rule_states)?
-                    && rhs.compute_for_event(event, operands, rule_states)?),
-                Op::Or => Ok(lhs.compute_for_event(event, operands, rule_states)?
-                    || rhs.compute_for_event(event, operands, rule_states)?),
+            Expr::Variable(var) => match operands.get(var) {
+                Some(m) => m.match_event(event, ctx),
+                // check_operands rejects unknown operands at compile time
+                None => unreachable!("unknown operand {var}"),
             },
-            Expr::Negate(expr) => Ok(!expr.compute_for_event(event, operands, rule_states)?),
+            Expr::BinOp { lhs, op, rhs } => match op {
+                Op::And => Ok(lhs.compute_for_event(event, operands, ctx.as_deref_mut())?
+                    && rhs.compute_for_event(event, operands, ctx)?),
+                Op::Or => Ok(lhs.compute_for_event(event, operands, ctx.as_deref_mut())?
+                    || rhs.compute_for_event(event, operands, ctx)?),
+            },
+            Expr::Negate(expr) => Ok(!expr.compute_for_event(event, operands, ctx)?),
             Expr::None => Ok(true),
+        }
+    }
+
+    fn check_operands(&self, operands: &HashMap<String, Match>) -> Result<(), ParseError> {
+        match self {
+            Expr::Variable(var) if !operands.contains_key(var) => {
+                Err(ParseError::UnknownOperand(var.clone()))
+            }
+            Expr::BinOp { lhs, rhs, .. } => {
+                lhs.check_operands(operands)?;
+                rhs.check_operands(operands)
+            }
+            Expr::Negate(expr) => expr.check_operands(operands),
+            // no wildcard: a new variant must decide how its operands are checked
+            Expr::Variable(_)
+            | Expr::AllOfThem
+            | Expr::AllOfVars(_)
+            | Expr::AnyOfThem
+            | Expr::AnyOfVars(_)
+            | Expr::NoneOfThem
+            | Expr::NoneOfVars(_)
+            | Expr::NOfThem(_)
+            | Expr::NOfVars(..)
+            | Expr::None => Ok(()),
         }
     }
 
     #[allow(dead_code)]
     // this function is used in test
-    fn compute(&self, operands: &HashMap<&str, bool>) -> Result<bool, Error> {
+    fn compute(&self, operands: &HashMap<&str, bool>) -> Result<bool, matcher::Error> {
         match self {
             Expr::AllOfThem => Ok(operands.iter().all(|(_, &b)| b)),
             Expr::AllOfVars(start) => Ok(operands
@@ -330,7 +355,7 @@ pub(crate) struct Condition {
 }
 
 impl FromStr for Condition {
-    type Err = Error;
+    type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Expr::from_str(s)?.into())
     }
@@ -347,12 +372,19 @@ impl Condition {
         &self,
         event: &E,
         operands: &HashMap<String, Match>,
-        rules_states: &HashMap<Cow<'_, str>, bool>,
-    ) -> Result<bool, Error>
+        ctx: Option<&mut ScanContext<'_, E>>,
+    ) -> Result<bool, matcher::Error>
     where
         E: for<'e> Event<'e>,
     {
-        self.expr.compute_for_event(event, operands, rules_states)
+        self.expr.compute_for_event(event, operands, ctx)
+    }
+
+    pub(crate) fn check_operands(
+        &self,
+        operands: &HashMap<String, Match>,
+    ) -> Result<(), ParseError> {
+        self.expr.check_operands(operands)
     }
 }
 

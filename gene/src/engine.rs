@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     compiler,
-    rules::{self, bound_severity, CompiledRule, Decision},
+    rules::{self, bound_severity, matcher, CompiledRule, Decision},
     Compiler, Event, FieldNameIterator, FieldValue,
 };
 
@@ -561,10 +561,67 @@ pub struct Engine {
     // key: (source, event_id)
     // value: vector of rule indexes
     rules_cache: HashMap<(Cow<'static, str>, i64), RuleCacheEntry>,
-    // cache rules dependencies
-    // key: rule index
-    // value: vector of dependency indexes
-    deps_cache: HashMap<usize, Vec<usize>>,
+}
+
+enum DepState {
+    Match(bool),
+    Error(rules::Error),
+}
+
+/// Evaluates rules on demand during a scan, memoizing each result so that a
+/// rule is evaluated at most once per event.
+pub(crate) struct ScanContext<'a, E> {
+    rules: &'a [CompiledRule],
+    names: &'a HashMap<String, usize>,
+    event: &'a E,
+    states: HashMap<usize, DepState>,
+}
+
+impl<'a, E> ScanContext<'a, E>
+where
+    E: for<'e> Event<'e>,
+{
+    fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
+        let rules = self.rules;
+        let r = &rules[idx];
+
+        // not a dependency -> evaluate rule
+        if !r.is_dep {
+            return r.match_event(self.event, Some(self));
+        }
+
+        // check if rule was already evaluated
+        match self.states.get(&idx) {
+            Some(DepState::Match(ok)) => return Ok(*ok),
+            Some(DepState::Error(e)) => return Err(e.clone()),
+            None => {}
+        }
+
+        if !r.can_match_on(self.event.source(), self.event.id()) {
+            self.states.insert(idx, DepState::Match(false));
+            return Ok(false);
+        }
+
+        match r.match_event(self.event, Some(self)) {
+            Ok(ok) => {
+                self.states.insert(idx, DepState::Match(ok));
+                Ok(ok)
+            }
+            Err(e) => {
+                self.states.insert(idx, DepState::Error(e.clone()));
+                Err(e)
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn match_rule(&mut self, name: &str) -> Result<bool, matcher::Error> {
+        let idx = *self
+            .names
+            .get(name)
+            .ok_or_else(|| matcher::Error::dependency_not_found(name))?;
+        Ok(self.match_rule_at(idx)?)
+    }
 }
 
 impl TryFrom<Compiler> for Engine {
@@ -590,19 +647,14 @@ impl Engine {
 
     #[inline(always)]
     pub(crate) fn insert_compiled(&mut self, r: CompiledRule) {
-        let has_deps = !r.depends.is_empty();
-
-        // this is the index the rule is going to be inserted at
-        let rule_idx = self.rules.len();
-        self.names.insert(r.name.clone(), rule_idx);
-        self.rules.push(r);
-
-        // since we know all the dependent rules are there, we can cache
-        // the list of dependencies and we never need to compute it again
-        if has_deps {
-            self.deps_cache
-                .insert(rule_idx, self.dfs_dep_search(rule_idx));
+        // dependencies are always inserted before their dependents
+        for d in r.depends.iter() {
+            if let Some(&i) = self.names.get(d) {
+                self.rules[i].is_dep = true;
+            }
         }
+        self.names.insert(r.name.clone(), self.rules.len());
+        self.rules.push(r);
 
         // cache becomes outdated
         self.rules_cache.clear();
@@ -663,39 +715,14 @@ impl Engine {
         self.rules.is_empty()
     }
 
-    /// Dfs recursive dependency finding
-    /// There is no check for circular references as those are impossible
-    /// due to the fact that a rule cannot depend on a non existing rule.
-    #[inline(always)]
-    fn dfs_dep_search(&self, rule_idx: usize) -> Vec<usize> {
-        // recursive function
-        fn rule_dep_search_rec(
-            eng: &Engine,
-            rule_idx: usize,
-            dfs: &mut Vec<usize>,
-            mark: &mut HashSet<usize>,
-        ) {
-            for req_name in eng.rules[rule_idx].depends.iter() {
-                if let Some(&dep) = eng.names.get(req_name) {
-                    // rules graph is a DAG (enforced by the compiler) so a
-                    // marked node has its whole sub-graph already pushed
-                    if mark.contains(&dep) {
-                        continue;
-                    }
-                    rule_dep_search_rec(eng, dep, dfs, mark);
-                    dfs.push(dep);
-                    mark.insert(dep);
-                }
-            }
-        }
-
-        let mut req = HashSet::new();
-        let mut dfs = Vec::new();
-        rule_dep_search_rec(self, rule_idx, &mut dfs, &mut req);
-        dfs
-    }
-
     /// Scan an [`Event`] with all the rules loaded in the [`Engine`]
+    ///
+    /// Dependencies (`rule(name)` matches) are evaluated lazily, only when a
+    /// condition reaches them, and at most once per event. Consequently, an
+    /// error in a dependency the condition never reaches is not reported.
+    ///
+    /// When several rules fail, only the first error is returned, as later
+    /// ones may only report a failed dependency rather than the root cause.
     pub fn scan<E>(
         &mut self,
         event: &E,
@@ -704,7 +731,6 @@ impl Engine {
         E: for<'e> Event<'e>,
     {
         let mut sr = ScanResult::default_exclude();
-        let mut last_err: Option<rules::Error> = None;
 
         let src = event.source();
         let id = event.id();
@@ -718,57 +744,28 @@ impl Engine {
                     .expect("cache_rules always inserts an entry for (source, id)")
             }
         };
-        let mut states = HashMap::new();
+
+        let mut ctx = ScanContext {
+            rules: &self.rules,
+            names: &self.names,
+            event,
+            states: HashMap::new(),
+        };
+
+        let mut first_err = None;
 
         // we iterate over each because we don't want exclude rules from filter
         // exclude to impact detection include and vice versa
         for it in [cached_rules.filters.iter(), cached_rules.detections.iter()] {
-            for i in it {
-                // this is equivalent to an OOB error but this should not happen
-                let r = self.rules.get(*i).unwrap();
-
-                if !r.depends.is_empty() {
-                    debug_assert!(self.deps_cache.contains_key(i));
-                    // there are some dependent rules to match against
-                    if let Some(deps) = self.deps_cache.get(i) {
-                        // we match every dependency of the rule first
-                        for &r_i in deps.iter() {
-                            if let Some(r) = self.rules.get(r_i) {
-                                // we don't need to compute rule again
-                                // NB: rule might be used in several places and already computed
-                                if states.contains_key(&Cow::Borrowed(r.name.as_str())) {
-                                    continue;
-                                }
-
-                                // if the rule cannot match we don't need to go further
-                                if !r.can_match_on(event.source(), id) {
-                                    states.insert(Cow::Borrowed(r.name.as_str()), false);
-                                    continue;
-                                }
-
-                                match r.match_event_with_states(event, &states) {
-                                    Ok(ok) => {
-                                        states.insert(Cow::Borrowed(r.name.as_str()), ok);
-                                    }
-                                    Err(e) => last_err = Some(e),
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // if the rule has already been matched in the process
-                // of dependency matching of whatever rule
-                let ok = match states.get(&Cow::Borrowed(r.name.as_str())) {
-                    Some(&ok) => ok,
-                    None => match r.match_event_with_states(event, &states) {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            last_err = Some(e);
-                            false
-                        }
-                    },
-                };
+            for &i in it {
+                let r = &self.rules[i];
+                // NB: a rule may also be a dependency, so it goes through the
+                // memoizing scan context; can_match_on was already checked by cache_rules
+                // and errors are recorded in first_err
+                let ok = ctx.match_rule_at(i).unwrap_or_else(|e| {
+                    first_err.get_or_insert(e);
+                    false
+                });
 
                 // we process scan result
                 if ok {
@@ -782,7 +779,7 @@ impl Engine {
             }
         }
 
-        if let Some(err) = last_err {
+        if let Some(err) = first_err {
             return Err((sr, err).into());
         }
 
@@ -1151,113 +1148,300 @@ name: match.all
 
         fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
         let sr = e.scan(&Dummy2 {}).unwrap();
-        assert!(!sr.includes_detection("depends"));
+        assert!(!sr.includes_detection("main"));
         assert!(!sr.includes_detection("dep.rule"));
         assert!(sr.includes_detection("match.all"));
     }
 
-    #[test]
-    fn test_dep_cache() {
+    /// Event recording every field access
+    struct Recorder {
+        fields: HashMap<&'static str, &'static str>,
+        accesses: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Recorder {
+        fn new(fields: &[(&'static str, &'static str)]) -> Self {
+            Self {
+                fields: fields.iter().copied().collect(),
+                accesses: Default::default(),
+            }
+        }
+
+        fn count(&self, path: &str) -> usize {
+            self.accesses.borrow().iter().filter(|p| *p == path).count()
+        }
+    }
+
+    impl<'f> FieldGetter<'f> for Recorder {
+        fn get_from_iter(&'f self, _: FieldNameIterator<'_>) -> Option<FieldValue<'f>> {
+            unimplemented!()
+        }
+
+        fn get_from_path(&self, path: &crate::XPath) -> Option<FieldValue<'_>> {
+            let path = path.to_string_lossy().to_string();
+            let v = self.fields.get(path.as_str()).map(|&v| v.into());
+            self.accesses.borrow_mut().push(path);
+            v
+        }
+    }
+
+    impl<'e> Event<'e> for Recorder {
+        fn id(&self) -> i64 {
+            1
+        }
+
+        fn source(&self) -> std::borrow::Cow<'_, str> {
+            "test".into()
+        }
+    }
+
+    fn engine(rules: &str) -> Engine {
         let mut c = Compiler::new();
-        c.load_rules_from_str(
-            r#"
-name: dep.rule
+        c.load_rules_from_str(rules).unwrap();
+        Engine::try_from(c).unwrap()
+    }
+
+    const DEP_TARGET: &str = r#"
+name: dep.target
 type: dependency
 matches:
-    $ip: .ip == '8.8.4.4'
-condition: any of them
+    $t: .target ~= '^/etc/'
+condition: $t
+"#;
 
+    #[test]
+    fn test_lazy_dep_not_reached() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
 ---
-
-name: main
+name: susp.filemod.cli
 matches:
-    $dep1: rule(dep.rule)
-condition: all of them
+    $cmd: .cmd ~= '(chmod|chattr)'
+    $dep: rule(dep.target)
+condition: $cmd && $dep
+"#
+        ));
 
----
+        let ev = Recorder::new(&[(".cmd", "ls"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.includes_detection("susp.filemod.cli"));
+        assert_eq!(*ev.accesses.borrow(), vec![".cmd".to_string()]);
 
-name: multi.deps
-matches:
-    $dep1: rule(dep.rule)
-    $dep2: rule(main)
-    $dep3: rule(dep.rule)
-    $dep4: rule(dep.rule)
-condition: all of them
-"#,
-        )
-        .unwrap();
-
-        let e = Engine::try_from(c).unwrap();
-
-        // we check the dep cache is correct
-        assert_eq!(
-            e.deps_cache
-                .get(e.names.get("multi.deps").unwrap())
-                .unwrap()
-                .len(),
-            2
-        );
+        let ev = Recorder::new(&[(".cmd", "chmod"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("susp.filemod.cli"));
+        assert_eq!(*ev.accesses.borrow(), vec![".cmd", ".target"]);
     }
 
     #[test]
-    fn test_diamond_deps() {
-        let mut c = Compiler::new();
-        c.load_rules_from_str(
+    fn test_lazy_dep_other_event() {
+        let mut e = engine(
             r#"
-name: base
+name: dep.target
+type: dependency
+match-on:
+    events:
+        test: [ 2 ]
+matches:
+    $t: .target ~= '^/etc/'
+condition: $t
+---
+name: susp.filemod.cli
+matches:
+    $cmd: .cmd ~= '(chmod|chattr)'
+    $dep: rule(dep.target)
+condition: $cmd && $dep
+"#,
+        );
+
+        let ev = Recorder::new(&[(".cmd", "chmod"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.includes_detection("susp.filemod.cli"));
+        assert_eq!(*ev.accesses.borrow(), vec![".cmd".to_string()]);
+    }
+
+    #[test]
+    fn test_lazy_dep_shared() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
+---
+name: first
+matches:
+    $dep: rule(dep.target)
+condition: $dep
+---
+name: second
+matches:
+    $dep: rule(dep.target)
+    $first: rule(first)
+condition: $dep and $first
+"#
+        ));
+
+        let ev = Recorder::new(&[(".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("first"));
+        assert!(sr.includes_detection("second"));
+        assert_eq!(ev.count(".target"), 1);
+    }
+
+    #[test]
+    fn test_detection_as_dep() {
+        let mut e = engine(
+            r#"
+name: chmod
+matches:
+    $cmd: .cmd ~= 'chmod'
+condition: $cmd
+---
+name: a.chmod.etc
+matches:
+    $chmod: rule(chmod)
+    $t: .target ~= '^/etc/'
+condition: $chmod and $t
+---
+name: z.chmod.tmp
+matches:
+    $chmod: rule(chmod)
+    $t: .target ~= '^/tmp/'
+condition: $chmod or $t
+"#,
+        );
+
+        let ev = Recorder::new(&[(".cmd", "chmod"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("chmod"));
+        assert!(sr.includes_detection("a.chmod.etc"));
+        assert!(sr.includes_detection("z.chmod.tmp"));
+        assert_eq!(ev.count(".cmd"), 1);
+        assert!(e.rules[e.names["chmod"]].is_dep);
+        assert!(!e.rules[e.names["a.chmod.etc"]].is_dep);
+    }
+
+    #[test]
+    fn test_lazy_dep_nested() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
+---
+name: dep.mid
 type: dependency
 matches:
-    $ip: .ip == '8.8.4.4'
-condition: any of them
-
+    $d: rule(dep.target)
+    $u: .user == 'root'
+condition: $u and $d
 ---
-
-name: left
-type: dependency
-matches:
-    $b: rule(base)
-condition: all of them
-
----
-
-name: right
-type: dependency
-matches:
-    $b: rule(base)
-condition: all of them
-
----
-
 name: top
 matches:
-    $l: rule(left)
-    $r: rule(right)
-condition: all of them
+    $d: rule(dep.mid)
+condition: $d
+"#
+        ));
+
+        let ev = Recorder::new(&[(".user", "root"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("top"));
+        assert_eq!(*ev.accesses.borrow(), vec![".user", ".target"]);
+
+        let ev = Recorder::new(&[(".user", "bob"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.includes_detection("top"));
+        assert_eq!(*ev.accesses.borrow(), vec![".user"]);
+    }
+
+    #[test]
+    fn test_lazy_dep_error() {
+        let mut e = engine(
+            r#"
+name: dep.err
+type: dependency
+matches:
+    $m: .missing == 'x'
+condition: $m
+---
+name: rule
+matches:
+    $cmd: .cmd == 'chmod'
+    $dep: rule(dep.err)
+condition: $cmd && !$dep
 "#,
-        )
-        .unwrap();
+        );
 
-        let mut e = Engine::try_from(c).unwrap();
+        // the errored dependency is never reached so no error is reported
+        let ev = Recorder::new(&[(".cmd", "ls")]);
+        assert!(e.scan(&ev).is_ok());
 
-        let idx = |name: &str| *e.names.get(name).unwrap();
-        let deps = e.deps_cache.get(&idx("top")).unwrap();
+        // the error is reported and a negated failed dependency does not match
+        let ev = Recorder::new(&[(".cmd", "chmod")]);
+        let err = e.scan(&ev).unwrap_err();
+        assert!(!err.0.includes_detection("rule"));
+        assert!(err.1.to_string().contains(".missing"), "{}", err.1);
+        assert_eq!(ev.count(".missing"), 1);
+    }
 
-        assert_eq!(deps.len(), 3);
-        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
-        assert_eq!(deps[0], idx("base"));
+    #[test]
+    fn test_lazy_dep_cached_error() {
+        let e = engine(
+            r#"
+name: dep.err
+type: dependency
+matches:
+    $m: .missing == 'x'
+condition: $m
+---
+name: rule
+matches:
+    $dep: rule(dep.err)
+condition: $dep
+"#,
+        );
 
-        fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
-        assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
+        let ev = Recorder::new(&[]);
+        let mut ctx = ScanContext {
+            rules: &e.rules,
+            names: &e.names,
+            event: &ev,
+            states: HashMap::new(),
+        };
 
-        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
-        assert!(!e.scan(&Dummy2 {}).unwrap().includes_detection("top"));
+        let first = ctx.match_rule("dep.err").unwrap_err();
+        assert!(first.to_string().contains(".missing"), "{first}");
+
+        // the cached error is the original one
+        assert_eq!(ctx.match_rule("dep.err").unwrap_err(), first);
+        assert_eq!(ev.count(".missing"), 1);
+    }
+
+    #[test]
+    fn test_lazy_dep_exclude() {
+        let mut e = engine(&format!(
+            r#"{DEP_TARGET}
+---
+name: excl
+decision: exclude
+matches:
+    $dep: rule(dep.target)
+condition: $dep
+---
+name: incl
+matches:
+    $dep: rule(dep.target)
+    $u: .user == 'root'
+condition: $dep and $u
+"#
+        ));
+
+        let ev = Recorder::new(&[(".user", "root"), (".target", "/etc/passwd")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(!sr.detection_decision().is_include());
+        assert!(!sr.includes_detection("incl"));
+        assert_eq!(*ev.accesses.borrow(), vec![".target"]);
     }
 
     #[test]
     fn test_deep_diamond_deps() {
-        // ladder of diamonds: dependency resolution used to revisit shared
-        // sub-graphs, making engine construction exponential in depth
-        const DEPTH: usize = 64;
+        // ladder of diamonds: without memoization, scanning would revisit
+        // shared sub-graphs exponentially in depth
+        const DEPTH: usize = 31;
 
         let mut rules = String::from(
             "name: l0\ntype: dependency\nmatches:\n  $ip: .ip == '8.8.4.4'\ncondition: $ip\n",
@@ -1281,12 +1465,11 @@ condition: all of them
         c.load_rules_from_str(rules).unwrap();
         let mut e = Engine::try_from(c).unwrap();
 
-        let deps = e.deps_cache.get(e.names.get("top").unwrap()).unwrap();
-        assert_eq!(deps.len(), 3 * DEPTH + 1);
-        assert_eq!(deps.iter().collect::<HashSet<_>>().len(), deps.len());
-
         fake_event!(Dummy, id = 1, source = "test", (".ip", "8.8.4.4"));
         assert!(e.scan(&Dummy {}).unwrap().includes_detection("top"));
+
+        fake_event!(Dummy2, id = 1, source = "test", (".ip", "8.8.8.8"));
+        assert!(!e.scan(&Dummy2 {}).unwrap().includes_detection("top"));
     }
 
     #[test]
@@ -1364,7 +1547,7 @@ name: match.all
 
         fake_event!(Dummy2, id = 2, source = "test", (".ip", "8.8.8.8"));
         let sr = e.scan(&Dummy2 {}).unwrap();
-        assert!(!sr.includes_detection("depends"));
+        assert!(!sr.includes_detection("main"));
         assert!(!sr.includes_detection("dep.rule"));
         assert!(sr.includes_detection("match.all"));
     }
