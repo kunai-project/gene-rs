@@ -561,45 +561,11 @@ pub struct Engine {
     // key: (source, event_id)
     // value: vector of rule indexes
     rules_cache: HashMap<(Cow<'static, str>, i64), RuleCacheEntry>,
-    dependency_results: DependencyResults,
 }
 
-/// Successful dependency results use compact slots; errors are stored separately
-/// so a normal scan never allocates an error table or retains an old error.
-#[derive(Debug, Default, Clone)]
-struct DependencyResults {
-    epoch: u32,
-    matches: Vec<(u32, bool)>,
-    errors: HashMap<usize, rules::Error>,
-}
-
-impl DependencyResults {
-    fn reset(&mut self, rule_count: usize) {
-        self.errors.clear();
-        self.matches.resize(rule_count, (0, false));
-        self.epoch = self.epoch.wrapping_add(1);
-        if self.epoch == 0 {
-            self.matches.fill((0, false));
-            self.epoch = 1;
-        }
-    }
-
-    fn get(&self, index: usize) -> Option<Result<bool, rules::Error>> {
-        if let Some(error) = self.errors.get(&index) {
-            return Some(Err(error.clone()));
-        }
-        let (epoch, matched) = self.matches[index];
-        (epoch == self.epoch).then_some(Ok(matched))
-    }
-
-    fn insert(&mut self, index: usize, result: &Result<bool, rules::Error>) {
-        match result {
-            Ok(matched) => self.matches[index] = (self.epoch, *matched),
-            Err(error) => {
-                self.errors.insert(index, error.clone());
-            }
-        }
-    }
+enum DepState {
+    Match(bool),
+    Error(rules::Error),
 }
 
 /// Evaluates rules on demand during a scan, memoizing each result so that a
@@ -608,7 +574,7 @@ pub(crate) struct ScanContext<'a, E> {
     rules: &'a [CompiledRule],
     names: &'a HashMap<String, usize>,
     event: &'a E,
-    states: DependencyResults,
+    states: HashMap<usize, DepState>,
 }
 
 impl<'a, E> ScanContext<'a, E>
@@ -624,16 +590,28 @@ where
             return r.match_event(self.event, Some(self));
         }
 
-        if let Some(result) = self.states.get(idx) {
-            return result;
+        // check if rule was already evaluated
+        match self.states.get(&idx) {
+            Some(DepState::Match(ok)) => return Ok(*ok),
+            Some(DepState::Error(e)) => return Err(e.clone()),
+            None => {}
         }
-        let result = if r.can_match_on(self.event.source(), self.event.id()) {
-            r.match_event(self.event, Some(self))
-        } else {
-            Ok(false)
-        };
-        self.states.insert(idx, &result);
-        result
+
+        if !r.can_match_on(self.event.source(), self.event.id()) {
+            self.states.insert(idx, DepState::Match(false));
+            return Ok(false);
+        }
+
+        match r.match_event(self.event, Some(self)) {
+            Ok(ok) => {
+                self.states.insert(idx, DepState::Match(ok));
+                Ok(ok)
+            }
+            Err(e) => {
+                self.states.insert(idx, DepState::Error(e.clone()));
+                Err(e)
+            }
+        }
     }
 
     #[inline]
@@ -763,9 +741,6 @@ impl Engine {
         let src = event.source();
         let id = event.id();
 
-        let mut states = std::mem::take(&mut self.dependency_results);
-        states.reset(self.rules.len());
-
         // a cache hit costs a single lookup, the cache is filled on miss only
         let cached_rules = match self.cached_rules(&src, id) {
             Some(cached) => cached,
@@ -780,7 +755,7 @@ impl Engine {
             rules: &self.rules,
             names: &self.names,
             event,
-            states,
+            states: HashMap::new(),
         };
 
         let mut first_err = None;
@@ -809,8 +784,6 @@ impl Engine {
                 }
             }
         }
-
-        self.dependency_results = ctx.states;
 
         if let Some(err) = first_err {
             return Err((sr, err).into());
@@ -1433,11 +1406,7 @@ condition: $dep
             rules: &e.rules,
             names: &e.names,
             event: &ev,
-            states: {
-                let mut states = DependencyResults::default();
-                states.reset(e.rules.len());
-                states
-            },
+            states: HashMap::new(),
         };
 
         let first = ctx.match_rule("dep.err").unwrap_err();
@@ -1895,56 +1864,6 @@ condition: $a and $b
             .unwrap();
         assert!(sr.includes_detection("test"));
     }
-    #[test]
-    fn dependency_results_do_not_leak_between_events_or_clones() {
-        let mut e = engine(
-            r#"
-name: dep
-type: dependency
-matches:
-    $value: .value == 'x'
-condition: $value
----
-name: detection
-matches:
-    $dep: rule(dep)
-condition: $dep
-"#,
-        );
-        assert!(e.scan(&Recorder::new(&[])).is_err());
-        assert!(!e.dependency_results.errors.is_empty());
-        let matching = Recorder::new(&[(".value", "x")]);
-        assert!(e.scan(&matching).unwrap().includes_detection("detection"));
-        assert!(e.dependency_results.errors.is_empty());
-        let mut cloned = e.clone();
-        let nonmatching = Recorder::new(&[(".value", "y")]);
-        assert!(!cloned
-            .scan(&nonmatching)
-            .unwrap()
-            .includes_detection("detection"));
-        assert!(!e
-            .scan(&nonmatching)
-            .unwrap()
-            .includes_detection("detection"));
-        assert!(e.scan(&Recorder::new(&[])).is_err());
-        assert!(e.scan(&matching).unwrap().includes_detection("detection"));
-        assert_eq!(matching.count(".value"), 2);
-    }
-
-    #[test]
-    fn dependency_epoch_wrap_invalidates_old_matches() {
-        let mut results = DependencyResults::default();
-        results.reset(1);
-        results.insert(0, &Ok(true));
-        assert_eq!(results.get(0), Some(Ok(true)));
-        results.epoch = u32::MAX;
-        results.reset(2);
-        assert_eq!(results.get(0), None);
-        assert_eq!(results.get(1), None);
-        results.insert(1, &Ok(false));
-        assert_eq!(results.get(1), Some(Ok(false)));
-    }
-
     #[test]
     fn bound_groups_preserve_short_circuit_order() {
         let mut e = engine(
