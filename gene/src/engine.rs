@@ -1391,7 +1391,8 @@ condition: $dep
             c.load_rules_from_str(rules).unwrap();
             assert!(matches!(
                 Engine::try_from(c),
-                Err(compiler::Error::UnknownRuleDependency(d)) if d == "missing"
+                Err(compiler::Error::UnknownRuleDependency { rule, dep })
+                    if rule == "rule" && dep == "missing"
             ));
         }
     }
