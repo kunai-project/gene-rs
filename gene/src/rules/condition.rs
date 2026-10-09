@@ -292,6 +292,24 @@ mod tests {
     }
 
     #[test]
+    fn test_operands_order() {
+        let raw = [
+            ("$a", "rule(dep)"),
+            ("$b", ".x ~= 'x'"),
+            ("$c", ".x == @.y"),
+            ("$d", ".x == 'x'"),
+            ("$f", ".x == true"),
+            ("$e", ".x == false"),
+        ]
+        .into_iter()
+        .map(|(n, m)| (n.to_string(), m.to_string()))
+        .collect();
+
+        let ops = Operands::compile(raw).unwrap();
+        assert_eq!(ops.names, ["$e", "$f", "$d", "$c", "$b", "$a"]);
+    }
+
+    #[test]
     fn test_idents() {
         let good = ["$test", "$test_1", "$a", "$A42", "$A_42"];
 
