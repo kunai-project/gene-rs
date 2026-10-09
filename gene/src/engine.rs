@@ -639,7 +639,9 @@ impl Engine {
     pub(crate) fn insert_compiled(&mut self, mut r: CompiledRule) {
         // resolves this rule's dependency names to engine indices
         for dep in r.rule_deps_mut() {
-            if let Some(&i) = self.names.get(dep.rule_name()) {
+            let i = self.names.get(dep.rule_name()).copied();
+            debug_assert!(i.is_some(), "unknown dependency {}", dep.rule_name());
+            if let Some(i) = i {
                 dep.set_rule_index(i);
             }
         }
@@ -1371,6 +1373,27 @@ condition: $cmd && !$dep
         assert!(!err.0.includes_detection("rule"));
         assert!(err.1.to_string().contains(".missing"), "{}", err.1);
         assert_eq!(ev.count(".missing"), 1);
+    }
+
+    #[test]
+    fn test_unknown_dependency() {
+        let missing = r#"
+name: rule
+matches:
+    $dep: rule(missing)
+condition: $dep
+"#;
+        // insert_compiled expects dependencies to be inserted first
+        let after = format!("{missing}---\nname: missing\ncondition: true\n");
+
+        for rules in [missing, &after] {
+            let mut c = Compiler::new();
+            c.load_rules_from_str(rules).unwrap();
+            assert!(matches!(
+                Engine::try_from(c),
+                Err(compiler::Error::UnknownRuleDependency(d)) if d == "missing"
+            ));
+        }
     }
 
     #[test]
