@@ -1374,6 +1374,25 @@ condition: $cmd && !$dep
     }
 
     #[test]
+    fn test_of_cheap_operands_first() {
+        // $a sorts first by name, so this only passes if the cheaper $b is evaluated first
+        let mut e = engine(
+            r#"
+name: rule
+matches:
+    $a: .missing ~= 'x'
+    $b: .present == 'x'
+condition: any of them
+"#,
+        );
+
+        let ev = Recorder::new(&[(".present", "x")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("rule"));
+        assert_eq!(ev.count(".missing"), 0);
+    }
+
+    #[test]
     fn test_lazy_dep_cached_error() {
         let e = engine(
             r#"
