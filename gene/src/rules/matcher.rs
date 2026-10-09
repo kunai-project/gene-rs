@@ -198,6 +198,24 @@ pub(crate) enum Match {
     Rule(RuleMatch),
 }
 
+impl Match {
+    /// Rough relative evaluation cost, used to evaluate cheap operands first.
+    pub(crate) const fn cost(&self) -> u8 {
+        match self {
+            Self::Direct(d) => match d.value {
+                MatchValue::Bool(_)
+                | MatchValue::Number(_)
+                | MatchValue::Some
+                | MatchValue::None => 0,
+                MatchValue::String(_) | MatchValue::StringOrNumber(..) => 1,
+                MatchValue::Regex(_) => 3,
+            },
+            Self::Indirect(_) => 2,
+            Self::Rule(_) => 4,
+        }
+    }
+}
+
 impl From<IndirectMatch> for Match {
     fn from(value: IndirectMatch) -> Self {
         Self::Indirect(value)
@@ -281,11 +299,15 @@ impl IndirectMatch {
     {
         let src = event
             .get_from_path(&self.field_path)
-            .ok_or_else(|| Error::FieldNotFound(self.field_path.to_string_lossy().into()))?;
+            .ok_or(Error::FieldNotFound(
+                self.field_path.to_string_lossy().into(),
+            ))?;
 
         let tgt = event
             .get_from_path(&self.other_field)
-            .ok_or_else(|| Error::FieldNotFound(self.other_field.to_string_lossy().into()))?;
+            .ok_or(Error::FieldNotFound(
+                self.other_field.to_string_lossy().into(),
+            ))?;
 
         Ok(src == tgt)
     }
@@ -541,9 +563,9 @@ impl DirectMatch {
     }
 }
 
-/// Reference to another rule's result. The second field is the referenced
-/// rule's index in the engine, set by [`Engine`](crate::Engine) on insertion.
 #[derive(Debug, Clone, PartialEq)]
+/// Reference to another rule's result: the rule name, and its index in the
+/// engine, set on insertion.
 pub(crate) struct RuleMatch(String, Option<usize>);
 
 impl RuleMatch {
@@ -567,8 +589,11 @@ impl RuleMatch {
         E: for<'e> Event<'e>,
     {
         match (ctx, self.1) {
-            (Some(ctx), Some(i)) => ctx.match_rule_index(i),
-            (Some(ctx), None) => ctx.match_rule(&self.0),
+            (Some(ctx), Some(i)) => Ok(ctx.match_rule_at(i)?),
+            (Some(_), None) => {
+                debug_assert!(false, "dependency {} not bound by the engine", self.0);
+                Err(Error::dependency_not_found(&self.0))
+            }
             (None, _) => Err(Error::DependencyUnresolved(self.0.clone())),
         }
     }
@@ -578,7 +603,7 @@ impl RuleMatch {
         &self.0
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn set_rule_index(&mut self, i: usize) {
         self.1 = Some(i);
     }

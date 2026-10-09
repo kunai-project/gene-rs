@@ -17,7 +17,11 @@
 //! - [`Type`]: Rule type enum (detection, filter, dependency)
 //! - [`struct@Error`]: Rule compilation and processing errors
 
-use self::{attack::AttackId, condition::Condition, matcher::Match};
+use self::{
+    attack::AttackId,
+    condition::{Condition, Operands},
+    matcher::Match,
+};
 use crate::{engine::ScanContext, map::deserialize_uk_hashmap, template::Templates, Event};
 
 use lazy_static::lazy_static;
@@ -448,11 +452,7 @@ impl Rule {
                 attack: HashSet::new(),
                 include_events: Self::build_include_events(&filters),
                 exclude_events: Self::build_exclude_events(&filters),
-                operands: Vec::new(),
-                condition: match self.condition {
-                    Some(cond) => Condition::from_str(&cond)?,
-                    None => Condition::default(),
-                },
+                condition: Condition::default(),
                 severity: bound_severity(self.severity.unwrap_or_default()),
                 actions: self.actions.unwrap_or_default(),
             };
@@ -471,22 +471,16 @@ impl Rule {
                 }
             }
 
-            // Freeze the operand map's iteration order before binding group operators.
-            let mut operands = HashMap::new();
-            if let Some(matches) = self.matches {
-                for (name, expression) in matches {
-                    if !name.starts_with('$') {
-                        return Err(CompileError::InvalidOperand(name));
-                    }
-                    let m = Match::from_str(&expression)?;
-                    if let Match::Rule(dependency) = &m {
-                        c.depends.insert(dependency.rule_name().into());
-                    }
-                    operands.insert(name, m);
+            let operands = Operands::compile(self.matches.unwrap_or_default())?;
+            c.condition =
+                Condition::parse(self.condition.as_deref().unwrap_or_default(), operands)?;
+
+            // we update the list of dependent rules
+            for m in c.condition.operands().matches() {
+                if let Match::Rule(r) = m {
+                    c.depends.insert(r.rule_name().into());
                 }
             }
-            c.operands = operands.into_iter().collect();
-            c.condition.bind(&c.operands)?;
 
             Ok(c)
         }()
@@ -521,7 +515,7 @@ impl FromStr for Rule {
 ///
 /// The compiled form uses optimized data structures:
 /// - `HashSet` for O(1) lookups of tags, attack IDs, and actions
-/// - `Vec` for index-based match expression access
+/// - Condition operands resolved to indexes at compile time
 /// - Pre-parsed conditions for faster evaluation
 /// - Event filtering maps for quick event matching checks
 ///
@@ -536,7 +530,6 @@ pub struct CompiledRule {
     pub(crate) attack: HashSet<String>,
     pub(crate) include_events: HashMap<String, HashSet<i64>>,
     pub(crate) exclude_events: HashMap<String, HashSet<i64>>,
-    pub(crate) operands: Vec<(String, Match)>,
     pub(crate) condition: condition::Condition,
     pub(crate) severity: u8,
     pub(crate) actions: HashSet<String>,
@@ -599,17 +592,19 @@ impl TryFrom<Rule> for CompiledRule {
 }
 
 impl CompiledRule {
-    pub(crate) fn bind_rule_dependencies(&mut self, names: &HashMap<String, usize>) {
-        for (_, operand) in &mut self.operands {
-            if let Match::Rule(dependency) = operand {
-                if let Some(&index) = names.get(dependency.rule_name()) {
-                    dependency.set_rule_index(index);
-                }
-            }
-        }
+    /// Iterates over the rule's `rule(name)` operands.
+    #[inline]
+    pub(crate) fn rule_deps_mut(&mut self) -> impl Iterator<Item = &mut matcher::RuleMatch> {
+        self.condition
+            .operands_mut()
+            .matches_mut()
+            .filter_map(|m| match m {
+                Match::Rule(dep) => Some(dep),
+                _ => None,
+            })
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn match_event<E>(
         &self,
         event: &E,
@@ -619,7 +614,7 @@ impl CompiledRule {
         E: for<'e> Event<'e>,
     {
         self.condition
-            .compute_for_event(event, &self.operands, ctx)
+            .compute_for_event(event, ctx)
             .map_err(|e| Error {
                 rule: self.name.clone(),
                 kind: ErrorKind::Eval(e),

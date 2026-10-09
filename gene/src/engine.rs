@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     compiler,
-    rules::{self, bound_severity, matcher, CompiledRule, Decision},
+    rules::{self, bound_severity, CompiledRule, Decision},
     Compiler, Event, FieldNameIterator, FieldValue,
 };
 
@@ -572,7 +572,6 @@ enum DepState {
 /// rule is evaluated at most once per event.
 pub(crate) struct ScanContext<'a, E> {
     rules: &'a [CompiledRule],
-    names: &'a HashMap<String, usize>,
     event: &'a E,
     states: HashMap<usize, DepState>,
 }
@@ -581,7 +580,7 @@ impl<'a, E> ScanContext<'a, E>
 where
     E: for<'e> Event<'e>,
 {
-    fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
+    pub(crate) fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
         let rules = self.rules;
         let r = &rules[idx];
 
@@ -613,20 +612,6 @@ where
             }
         }
     }
-
-    #[inline]
-    pub(crate) fn match_rule_index(&mut self, index: usize) -> Result<bool, matcher::Error> {
-        Ok(self.match_rule_at(index)?)
-    }
-
-    #[inline]
-    pub(crate) fn match_rule(&mut self, name: &str) -> Result<bool, matcher::Error> {
-        let idx = *self
-            .names
-            .get(name)
-            .ok_or_else(|| matcher::Error::dependency_not_found(name))?;
-        Ok(self.match_rule_at(idx)?)
-    }
 }
 
 impl TryFrom<Compiler> for Engine {
@@ -650,9 +635,14 @@ impl Engine {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn insert_compiled(&mut self, mut r: CompiledRule) {
-        r.bind_rule_dependencies(&self.names);
+        // resolves this rule's dependency names to engine indices
+        for dep in r.rule_deps_mut() {
+            if let Some(&i) = self.names.get(dep.rule_name()) {
+                dep.set_rule_index(i);
+            }
+        }
         // dependencies are always inserted before their dependents
         for d in r.depends.iter() {
             if let Some(&i) = self.names.get(d) {
@@ -753,7 +743,6 @@ impl Engine {
 
         let mut ctx = ScanContext {
             rules: &self.rules,
-            names: &self.names,
             event,
             states: HashMap::new(),
         };
@@ -1404,16 +1393,16 @@ condition: $dep
         let ev = Recorder::new(&[]);
         let mut ctx = ScanContext {
             rules: &e.rules,
-            names: &e.names,
             event: &ev,
             states: HashMap::new(),
         };
+        let dep = e.names["dep.err"];
 
-        let first = ctx.match_rule("dep.err").unwrap_err();
+        let first = ctx.match_rule_at(dep).unwrap_err();
         assert!(first.to_string().contains(".missing"), "{first}");
 
         // the cached error is the original one
-        assert_eq!(ctx.match_rule("dep.err").unwrap_err(), first);
+        assert_eq!(ctx.match_rule_at(dep).unwrap_err(), first);
         assert_eq!(ev.count(".missing"), 1);
     }
 
@@ -1863,29 +1852,5 @@ condition: $a and $b
             })
             .unwrap();
         assert!(sr.includes_detection("test"));
-    }
-    #[test]
-    fn bound_groups_preserve_short_circuit_order() {
-        let mut e = engine(
-            r#"
-name: detection
-matches:
-    $a: .present == 'x'
-    $b: .missing == 'x'
-condition: any of them
-"#,
-        );
-        // Fix the order for the test; production retains the source map's order.
-        e.rules[0].operands.sort_by(|a, b| a.0.cmp(&b.0));
-        let rule = &mut e.rules[0];
-        rule.condition.bind(&rule.operands).unwrap();
-        let event = Recorder::new(&[(".present", "x")]);
-        assert!(e.scan(&event).unwrap().includes_detection("detection"));
-        assert_eq!(event.count(".missing"), 0);
-        e.rules[0].operands.reverse();
-        let rule = &mut e.rules[0];
-        rule.condition.bind(&rule.operands).unwrap();
-        assert!(e.scan(&event).is_err());
-        assert_eq!(event.count(".missing"), 1);
     }
 }

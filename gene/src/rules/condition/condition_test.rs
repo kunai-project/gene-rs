@@ -10,8 +10,10 @@ mod test {
     #[test]
     fn test_condition_computation() {
         TEST_CONDITIONS.iter().for_each(|(condition, result)| {
-            let cond = Expr::from_str(condition).unwrap();
-            assert_eq!(cond.compute(&OPERANDS).unwrap(), *result)
+            let names: Vec<&str> = OPERANDS.keys().copied().collect();
+            let values: Vec<bool> = OPERANDS.values().copied().collect();
+            let cond = Expr::parse(condition, &names).unwrap();
+            assert_eq!(cond.compute(&values), *result)
         });
     }
 }
