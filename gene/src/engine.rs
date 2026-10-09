@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     compiler,
-    rules::{self, bound_severity, matcher, CompiledRule, Decision},
+    rules::{self, bound_severity, CompiledRule, Decision},
     Compiler, Event, FieldNameIterator, FieldValue,
 };
 
@@ -572,7 +572,6 @@ enum DepState {
 /// rule is evaluated at most once per event.
 pub(crate) struct ScanContext<'a, E> {
     rules: &'a [CompiledRule],
-    names: &'a HashMap<String, usize>,
     event: &'a E,
     states: HashMap<usize, DepState>,
 }
@@ -581,7 +580,7 @@ impl<'a, E> ScanContext<'a, E>
 where
     E: for<'e> Event<'e>,
 {
-    fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
+    pub(crate) fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
         let rules = self.rules;
         let r = &rules[idx];
 
@@ -613,15 +612,6 @@ where
             }
         }
     }
-
-    #[inline]
-    pub(crate) fn match_rule(&mut self, name: &str) -> Result<bool, matcher::Error> {
-        let idx = *self
-            .names
-            .get(name)
-            .ok_or_else(|| matcher::Error::dependency_not_found(name))?;
-        Ok(self.match_rule_at(idx)?)
-    }
 }
 
 impl TryFrom<Compiler> for Engine {
@@ -646,7 +636,15 @@ impl Engine {
     }
 
     #[inline]
-    pub(crate) fn insert_compiled(&mut self, r: CompiledRule) {
+    pub(crate) fn insert_compiled(&mut self, mut r: CompiledRule) {
+        // resolves this rule's dependency names to engine indices
+        for dep in r.rule_deps_mut() {
+            let i = self.names.get(dep.rule_name()).copied();
+            debug_assert!(i.is_some(), "unknown dependency {}", dep.rule_name());
+            if let Some(i) = i {
+                dep.set_rule_index(i);
+            }
+        }
         // dependencies are always inserted before their dependents
         for d in r.depends.iter() {
             if let Some(&i) = self.names.get(d) {
@@ -747,7 +745,6 @@ impl Engine {
 
         let mut ctx = ScanContext {
             rules: &self.rules,
-            names: &self.names,
             event,
             states: HashMap::new(),
         };
@@ -1379,6 +1376,46 @@ condition: $cmd && !$dep
     }
 
     #[test]
+    fn test_unknown_dependency() {
+        let missing = r#"
+name: rule
+matches:
+    $dep: rule(missing)
+condition: $dep
+"#;
+        // insert_compiled expects dependencies to be inserted first
+        let after = format!("{missing}---\nname: missing\ncondition: true\n");
+
+        for rules in [missing, &after] {
+            let mut c = Compiler::new();
+            c.load_rules_from_str(rules).unwrap();
+            assert!(matches!(
+                Engine::try_from(c),
+                Err(compiler::Error::UnknownRuleDependency(d)) if d == "missing"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_of_cheap_operands_first() {
+        // $a sorts first by name, so this only passes if the cheaper $b is evaluated first
+        let mut e = engine(
+            r#"
+name: rule
+matches:
+    $a: .missing ~= 'x'
+    $b: .present == 'x'
+condition: any of them
+"#,
+        );
+
+        let ev = Recorder::new(&[(".present", "x")]);
+        let sr = e.scan(&ev).unwrap();
+        assert!(sr.includes_detection("rule"));
+        assert_eq!(ev.count(".missing"), 0);
+    }
+
+    #[test]
     fn test_lazy_dep_cached_error() {
         let e = engine(
             r#"
@@ -1398,16 +1435,16 @@ condition: $dep
         let ev = Recorder::new(&[]);
         let mut ctx = ScanContext {
             rules: &e.rules,
-            names: &e.names,
             event: &ev,
             states: HashMap::new(),
         };
+        let dep = e.names["dep.err"];
 
-        let first = ctx.match_rule("dep.err").unwrap_err();
+        let first = ctx.match_rule_at(dep).unwrap_err();
         assert!(first.to_string().contains(".missing"), "{first}");
 
         // the cached error is the original one
-        assert_eq!(ctx.match_rule("dep.err").unwrap_err(), first);
+        assert_eq!(ctx.match_rule_at(dep).unwrap_err(), first);
         assert_eq!(ev.count(".missing"), 1);
     }
 

@@ -198,6 +198,24 @@ pub(crate) enum Match {
     Rule(RuleMatch),
 }
 
+impl Match {
+    /// Rough relative evaluation cost, used to evaluate cheap operands first.
+    pub(crate) const fn cost(&self) -> u8 {
+        match self {
+            Self::Direct(d) => match d.value {
+                MatchValue::Bool(_)
+                | MatchValue::Number(_)
+                | MatchValue::Some
+                | MatchValue::None => 0,
+                MatchValue::String(_) | MatchValue::StringOrNumber(..) => 1,
+                MatchValue::Regex(_) => 3,
+            },
+            Self::Indirect(_) => 2,
+            Self::Rule(_) => 4,
+        }
+    }
+}
+
 impl From<IndirectMatch> for Match {
     fn from(value: IndirectMatch) -> Self {
         Self::Indirect(value)
@@ -546,7 +564,9 @@ impl DirectMatch {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RuleMatch(String);
+/// Reference to another rule's result: the rule name, and its index in the
+/// engine, set on insertion.
+pub(crate) struct RuleMatch(String, Option<usize>);
 
 impl RuleMatch {
     #[inline]
@@ -555,7 +575,7 @@ impl RuleMatch {
         let mut out = None;
         for pair in pair.into_inner() {
             match pair.as_rule() {
-                Rule::rule_name => out = Some(RuleMatch(pair.as_str().into())),
+                Rule::rule_name => out = Some(RuleMatch(pair.as_str().into(), None)),
                 // grammar doesn't allow anything else
                 _ => unreachable!(),
             }
@@ -568,15 +588,24 @@ impl RuleMatch {
     where
         E: for<'e> Event<'e>,
     {
-        match ctx {
-            Some(ctx) => ctx.match_rule(&self.0),
-            None => Err(Error::DependencyUnresolved(self.0.clone())),
+        match (ctx, self.1) {
+            (Some(ctx), Some(i)) => Ok(ctx.match_rule_at(i)?),
+            (Some(_), None) => {
+                debug_assert!(false, "dependency {} not bound by the engine", self.0);
+                Err(Error::dependency_not_found(&self.0))
+            }
+            (None, _) => Err(Error::DependencyUnresolved(self.0.clone())),
         }
     }
 
     #[inline]
     pub(crate) fn rule_name(&self) -> &str {
         &self.0
+    }
+
+    #[inline]
+    pub(crate) fn set_rule_index(&mut self, i: usize) {
+        self.1 = Some(i);
     }
 }
 
@@ -721,12 +750,12 @@ mod test {
 
         assert_eq!(
             as_rule_match(MatchParser::parse_input("rule(test)").unwrap()),
-            RuleMatch("test".into())
+            RuleMatch("test".into(), None)
         );
 
         assert_eq!(
             as_rule_match(MatchParser::parse_input("rule(blip.blop)").unwrap()),
-            RuleMatch("blip.blop".into())
+            RuleMatch("blip.blop".into(), None)
         )
     }
 }

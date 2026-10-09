@@ -1,4 +1,5 @@
 use super::matcher::{self, Match};
+use super::CompileError;
 use crate::engine::ScanContext;
 use crate::Event;
 use pest::{iterators::Pairs, pratt_parser::PrattParser, Parser};
@@ -30,17 +31,14 @@ pub(crate) enum Op {
     Or,
 }
 
+/// Condition expression whose operands are indexes into the condition's [`Operands`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Expr {
-    Variable(String),
-    AllOfThem,
-    AllOfVars(String),
-    AnyOfThem,
-    AnyOfVars(String),
-    NoneOfThem,
-    NoneOfVars(String),
-    NOfThem(usize),
-    NOfVars(usize, String),
+    Variable(usize),
+    AllOf(Vec<usize>),
+    AnyOf(Vec<usize>),
+    NoneOf(Vec<usize>),
+    NOf(usize, Vec<usize>),
     BinOp {
         lhs: Box<Expr>,
         op: Op,
@@ -67,127 +65,97 @@ pub enum ParseError {
     Parser(#[from] Box<pest::error::Error<Rule>>),
 }
 
-impl FromStr for Expr {
-    type Err = ParseError;
+/// Named match operands of a rule, in evaluation order.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Operands {
+    names: Vec<String>,
+    matches: Vec<Match>,
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl Operands {
+    /// Parses `$name: expression` pairs.
+    pub(crate) fn compile(raw: HashMap<String, String>) -> Result<Self, CompileError> {
+        let mut pairs = Vec::with_capacity(raw.len());
+        for (name, s) in raw {
+            if !name.starts_with('$') {
+                return Err(CompileError::InvalidOperand(name));
+            }
+            let m = Match::from_str(&s)?;
+            pairs.push((name, m));
+        }
+        // cheapest first so that `of` conditions short-circuit early,
+        // name as tie-breaker keeps evaluation order deterministic
+        pairs.sort_unstable_by(|a, b| (a.1.cost(), &a.0).cmp(&(b.1.cost(), &b.0)));
+        let (names, matches) = pairs.into_iter().unzip();
+        Ok(Self { names, matches })
+    }
+
+    #[inline]
+    pub(crate) fn matches(&self) -> impl Iterator<Item = &Match> {
+        self.matches.iter()
+    }
+
+    #[inline]
+    pub(crate) fn matches_mut(&mut self) -> impl Iterator<Item = &mut Match> {
+        self.matches.iter_mut()
+    }
+
+    /// Counts operands at `idx` evaluating to `expected`, stopping once `limit` is reached.
+    #[inline]
+    fn count<E>(
+        &self,
+        idx: &[usize],
+        event: &E,
+        mut ctx: Option<&mut ScanContext<'_, E>>,
+        expected: bool,
+        limit: usize,
+    ) -> Result<usize, matcher::Error>
+    where
+        E: for<'e> Event<'e>,
+    {
+        let mut c = 0;
+        for &i in idx {
+            if self.matches[i].match_event(event, ctx.as_deref_mut())? == expected {
+                c += 1;
+                if c >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(c)
+    }
+}
+
+impl Expr {
+    /// Parses `s`, resolving operand names to their index in `operands`.
+    fn parse<S: AsRef<str>>(s: &str, operands: &[S]) -> Result<Self, ParseError> {
         if s.is_empty() {
             return Ok(Self::None);
         }
 
         let mut pairs = ConditionParser::parse(Rule::condition, s).map_err(Box::new)?;
         match pairs.next() {
-            Some(pairs) => Ok(parse_expr(pairs.into_inner())),
+            Some(pairs) => parse_expr(pairs.into_inner(), operands),
             None => Ok(Self::None),
         }
     }
-}
 
-impl Expr {
     #[inline]
     fn compute_for_event<E>(
         &self,
         event: &E,
-        operands: &HashMap<String, Match>,
+        operands: &Operands,
         mut ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, matcher::Error>
     where
         E: for<'e> Event<'e>,
     {
         match self {
-            Expr::AllOfThem => {
-                for m in operands.values() {
-                    if !m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Expr::AllOfVars(start) => {
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if !m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Expr::NOfThem(n) => {
-                let mut c = 0;
-                for m in operands.values() {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        c += 1;
-                        if c >= *n {
-                            return Ok(true);
-                        }
-                    }
-                }
-                Ok(c >= *n)
-            }
-            Expr::NOfVars(n, start) => {
-                let mut c = 0;
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        c += 1;
-                        if c >= *n {
-                            return Ok(true);
-                        }
-                    }
-                }
-                Ok(c >= *n)
-            }
-            Expr::AnyOfThem => {
-                for m in operands.values() {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Expr::AnyOfVars(start) => {
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Expr::NoneOfThem => {
-                for m in operands.values() {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Expr::NoneOfVars(start) => {
-                for m in operands
-                    .iter()
-                    .filter(|(v, _)| v.starts_with(start))
-                    .map(|(_, m)| m)
-                {
-                    if m.match_event(event, ctx.as_deref_mut())? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Expr::Variable(var) => match operands.get(var) {
-                Some(m) => m.match_event(event, ctx),
-                // check_operands rejects unknown operands at compile time
-                None => unreachable!("unknown operand {var}"),
-            },
+            Expr::AllOf(idx) => Ok(operands.count(idx, event, ctx, false, 1)? == 0),
+            Expr::AnyOf(idx) => Ok(operands.count(idx, event, ctx, true, 1)? == 1),
+            Expr::NoneOf(idx) => Ok(operands.count(idx, event, ctx, true, 1)? == 0),
+            Expr::NOf(n, idx) => Ok(operands.count(idx, event, ctx, true, *n)? >= *n),
+            Expr::Variable(i) => operands.matches[*i].match_event(event, ctx),
             Expr::BinOp { lhs, op, rhs } => match op {
                 Op::And => Ok(lhs.compute_for_event(event, operands, ctx.as_deref_mut())?
                     && rhs.compute_for_event(event, operands, ctx)?),
@@ -199,135 +167,57 @@ impl Expr {
         }
     }
 
-    fn check_operands(&self, operands: &HashMap<String, Match>) -> Result<(), ParseError> {
+    #[cfg(test)]
+    fn compute(&self, operands: &[bool]) -> bool {
+        let count = |idx: &[usize]| idx.iter().filter(|&&i| operands[i]).count();
         match self {
-            Expr::Variable(var) if !operands.contains_key(var) => {
-                Err(ParseError::UnknownOperand(var.clone()))
-            }
-            Expr::BinOp { lhs, rhs, .. } => {
-                lhs.check_operands(operands)?;
-                rhs.check_operands(operands)
-            }
-            Expr::Negate(expr) => expr.check_operands(operands),
-            // no wildcard: a new variant must decide how its operands are checked
-            Expr::Variable(_)
-            | Expr::AllOfThem
-            | Expr::AllOfVars(_)
-            | Expr::AnyOfThem
-            | Expr::AnyOfVars(_)
-            | Expr::NoneOfThem
-            | Expr::NoneOfVars(_)
-            | Expr::NOfThem(_)
-            | Expr::NOfVars(..)
-            | Expr::None => Ok(()),
-        }
-    }
-
-    #[allow(dead_code)]
-    // this function is used in test
-    fn compute(&self, operands: &HashMap<&str, bool>) -> Result<bool, matcher::Error> {
-        match self {
-            Expr::AllOfThem => Ok(operands.iter().all(|(_, &b)| b)),
-            Expr::AllOfVars(start) => Ok(operands
-                .iter()
-                .filter(|(v, _)| v.starts_with(start))
-                .all(|(_, &b)| b)),
-            Expr::AnyOfThem => Ok(operands.iter().any(|(_, &b)| b)),
-            Expr::AnyOfVars(start) => Ok(operands
-                .iter()
-                .filter(|(v, _)| v.starts_with(start))
-                .any(|(_, &b)| b)),
-            Expr::NoneOfThem => Ok(!operands.iter().any(|(_, &b)| b)),
-            Expr::NoneOfVars(start) => Ok(!operands
-                .iter()
-                .filter(|(v, _)| v.starts_with(start))
-                .any(|(_, &b)| b)),
-            Expr::NOfThem(x) => {
-                if operands.len() < *x {
-                    return Ok(false);
-                }
-                for (c, _) in operands.iter().filter(|(_, &b)| b).enumerate() {
-                    // +1 because we start iterating at 0 ><
-                    if c + 1 >= *x {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Expr::NOfVars(x, start) => {
-                if operands.len() < *x {
-                    return Ok(false);
-                }
-                for (c, _) in operands
-                    .iter()
-                    .filter(|(v, &b)| b && v.starts_with(start))
-                    .enumerate()
-                {
-                    // +1 because we start iterating at 0 ><
-                    if c + 1 >= *x {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Expr::Variable(var) => Ok(*(operands.get(var.as_str()).unwrap())),
+            Expr::AllOf(idx) => count(idx) == idx.len(),
+            Expr::AnyOf(idx) => count(idx) > 0,
+            Expr::NoneOf(idx) => count(idx) == 0,
+            Expr::NOf(n, idx) => count(idx) >= *n,
+            Expr::Variable(i) => operands[*i],
             Expr::BinOp { lhs, op, rhs } => match op {
-                Op::And => Ok(lhs.compute(operands)? && rhs.compute(operands)?),
-                Op::Or => Ok(lhs.compute(operands)? || rhs.compute(operands)?),
+                Op::And => lhs.compute(operands) && rhs.compute(operands),
+                Op::Or => lhs.compute(operands) || rhs.compute(operands),
             },
-            Expr::Negate(expr) => Ok(!expr.compute(operands)?),
-            Expr::None => Ok(true),
+            Expr::Negate(expr) => !expr.compute(operands),
+            Expr::None => true,
         }
     }
 }
 
-fn parse_expr(pairs: Pairs<Rule>) -> Expr {
+fn parse_expr<S: AsRef<str>>(pairs: Pairs<Rule>, operands: &[S]) -> Result<Expr, ParseError> {
+    // pest guarantees "<n|kw> of <them|prefix>" for *_of_* rules
+    let vars = |s: &str| -> Vec<usize> {
+        let prefix = match s.rsplit_once(' ').unwrap().1 {
+            "them" => "",
+            p => p,
+        };
+        (0..operands.len())
+            .filter(|&i| operands[i].as_ref().starts_with(prefix))
+            .collect()
+    };
+    // pest guarantees a leading integer for n_of_* rules
+    let count = |s: &str| s.split_once(' ').unwrap().0.parse::<usize>().unwrap();
+
     PRATT_PARSER
         .map_primary(|primary| match primary.as_rule() {
-            Rule::var => Expr::Variable(primary.as_str().into()),
-            Rule::all_of_them => Expr::AllOfThem,
-            Rule::all_of_vars => {
-                Expr::AllOfVars(primary.as_str().rsplit_once(' ').unwrap().1.into())
-            }
-            Rule::none_of_them => Expr::NoneOfThem,
-            Rule::none_of_vars => {
-                Expr::NoneOfVars(primary.as_str().rsplit_once(' ').unwrap().1.into())
-            }
-            Rule::any_of_them => Expr::AnyOfThem,
-            Rule::any_of_vars => {
-                Expr::AnyOfVars(primary.as_str().rsplit_once(' ').unwrap().1.into())
-            }
-            Rule::n_of_them => {
-                // this should not panic in anyways as it is validated by pest
-                let n = // this should not panic in anyways as it is validated by pest
-                primary
-                    .as_str()
-                    .split_once(' ')
-                    .unwrap()
-                    .0
-                    .parse::<usize>()
-                    .unwrap();
-                if n == 0 {
-                    // equivalent to none of them
-                    return Expr::NoneOfThem;
+            Rule::var => operands
+                .iter()
+                .position(|o| o.as_ref() == primary.as_str())
+                .map(Expr::Variable)
+                .ok_or_else(|| ParseError::UnknownOperand(primary.as_str().into())),
+            Rule::all_of_them | Rule::all_of_vars => Ok(Expr::AllOf(vars(primary.as_str()))),
+            Rule::none_of_them | Rule::none_of_vars => Ok(Expr::NoneOf(vars(primary.as_str()))),
+            Rule::any_of_them | Rule::any_of_vars => Ok(Expr::AnyOf(vars(primary.as_str()))),
+            Rule::n_of_them | Rule::n_of_vars => {
+                let idx = vars(primary.as_str());
+                match count(primary.as_str()) {
+                    0 => Ok(Expr::NoneOf(idx)),
+                    n => Ok(Expr::NOf(n, idx)),
                 }
-                Expr::NOfThem(n)
             }
-            Rule::n_of_vars => {
-                let n = primary
-                    .as_str()
-                    .split_once(' ')
-                    .unwrap()
-                    .0
-                    .parse::<usize>()
-                    .unwrap();
-                let vars = primary.as_str().rsplit_once(' ').unwrap().1.into();
-                if n == 0 {
-                    return Expr::NoneOfVars(vars);
-                }
-                Expr::NOfVars(n, vars)
-            }
-            Rule::expr | Rule::ident | Rule::group => parse_expr(primary.into_inner()),
+            Rule::expr | Rule::ident | Rule::group => parse_expr(primary.into_inner(), operands),
             rule => unreachable!("Expr::parse expected atom, found {:?}", rule),
         })
         .map_infix(|lhs, op, rhs| {
@@ -336,55 +226,53 @@ fn parse_expr(pairs: Pairs<Rule>) -> Expr {
                 Rule::or => Op::Or,
                 rule => unreachable!("Expr::parse expected infix operation, found {:?}", rule),
             };
-            Expr::BinOp {
-                lhs: Box::new(lhs),
+            Ok(Expr::BinOp {
+                lhs: Box::new(lhs?),
                 op,
-                rhs: Box::new(rhs),
-            }
+                rhs: Box::new(rhs?),
+            })
         })
         .map_prefix(|op, rhs| match op.as_rule() {
-            Rule::negate => Expr::Negate(Box::new(rhs)),
+            Rule::negate => Ok(Expr::Negate(Box::new(rhs?))),
             _ => unreachable!(),
         })
         .parse(pairs)
 }
 
+/// Condition owning the operands its expression indexes into, so the two
+/// cannot get out of sync.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Condition {
-    pub(crate) expr: Expr,
-}
-
-impl FromStr for Condition {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Expr::from_str(s)?.into())
-    }
-}
-
-impl From<Expr> for Condition {
-    fn from(value: Expr) -> Self {
-        Self { expr: value }
-    }
+    expr: Expr,
+    operands: Operands,
 }
 
 impl Condition {
+    /// Parses `s`, resolving operand names to their index in `operands`.
+    pub(crate) fn parse(s: &str, operands: Operands) -> Result<Self, ParseError> {
+        let expr = Expr::parse(s, &operands.names)?;
+        Ok(Self { expr, operands })
+    }
+
+    #[inline]
+    pub(crate) fn operands(&self) -> &Operands {
+        &self.operands
+    }
+
+    #[inline]
+    pub(crate) fn operands_mut(&mut self) -> &mut Operands {
+        &mut self.operands
+    }
+
     pub(crate) fn compute_for_event<E>(
         &self,
         event: &E,
-        operands: &HashMap<String, Match>,
         ctx: Option<&mut ScanContext<'_, E>>,
     ) -> Result<bool, matcher::Error>
     where
         E: for<'e> Event<'e>,
     {
-        self.expr.compute_for_event(event, operands, ctx)
-    }
-
-    pub(crate) fn check_operands(
-        &self,
-        operands: &HashMap<String, Match>,
-    ) -> Result<(), ParseError> {
-        self.expr.check_operands(operands)
+        self.expr.compute_for_event(event, &self.operands, ctx)
     }
 }
 
@@ -396,6 +284,30 @@ mod tests {
     use pest::Parser;
 
     use super::*;
+
+    fn compute(cond: &str, operands: &[(&str, bool)]) -> bool {
+        let names: Vec<&str> = operands.iter().map(|(n, _)| *n).collect();
+        let values: Vec<bool> = operands.iter().map(|(_, b)| *b).collect();
+        Expr::parse(cond, &names).unwrap().compute(&values)
+    }
+
+    #[test]
+    fn test_operands_order() {
+        let raw = [
+            ("$a", "rule(dep)"),
+            ("$b", ".x ~= 'x'"),
+            ("$c", ".x == @.y"),
+            ("$d", ".x == 'x'"),
+            ("$f", ".x == true"),
+            ("$e", ".x == false"),
+        ]
+        .into_iter()
+        .map(|(n, m)| (n.to_string(), m.to_string()))
+        .collect();
+
+        let ops = Operands::compile(raw).unwrap();
+        assert_eq!(ops.names, ["$e", "$f", "$d", "$c", "$b", "$a"]);
+    }
 
     #[test]
     fn test_idents() {
@@ -416,6 +328,7 @@ mod tests {
 
     #[test]
     fn test_condition() {
+        let operands = ["$a", "$b", "$c", "$d", "$app_1"];
         let valid = [
             "",
             "$a",
@@ -433,140 +346,98 @@ mod tests {
         ];
 
         valid.iter().for_each(|ident| {
-            println!("{:?}", Expr::from_str(ident).unwrap());
+            println!("{:?}", Expr::parse(ident, &operands).unwrap());
         });
 
         // special cases
-        assert_eq!("0 of them".parse::<Expr>().unwrap(), Expr::NoneOfThem);
+        assert_eq!(
+            Expr::parse("0 of them", &operands).unwrap(),
+            Expr::NoneOf(vec![0, 1, 2, 3, 4])
+        );
 
         assert_eq!(
-            "0 of $app".parse::<Expr>().unwrap(),
-            Expr::NoneOfVars("$app".into())
+            Expr::parse("0 of $app", &operands).unwrap(),
+            Expr::NoneOf(vec![4])
+        );
+    }
+
+    #[test]
+    fn test_unknown_operand() {
+        assert_eq!(
+            Expr::parse("$a and !$c", &["$a", "$b"]),
+            Err(ParseError::UnknownOperand("$c".into()))
         );
     }
 
     #[test]
     fn test_all_of_them() {
-        let expr = Expr::from_str("all of them").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$a", true);
-            m.insert("$b", true);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(true));
-        operands.insert("$c", false);
-        assert_eq!(expr.compute(&operands), Ok(false));
+        assert!(compute("all of them", &[("$a", true), ("$b", true)]));
+        assert!(!compute(
+            "all of them",
+            &[("$a", true), ("$b", true), ("$c", false)]
+        ));
     }
 
     #[test]
     fn test_all_of_vars() {
-        let expr = Expr::from_str("all of $app").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$app1", true);
-            m.insert("$app2", true);
-            m.insert("$b", false);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(true));
-        operands.insert("$app3", false);
-        assert_eq!(expr.compute(&operands), Ok(false));
+        let mut operands = vec![("$app1", true), ("$app2", true), ("$b", false)];
+        assert!(compute("all of $app", &operands));
+        operands.push(("$app3", false));
+        assert!(!compute("all of $app", &operands));
     }
 
     #[test]
     fn test_any_of_them() {
-        let expr = Expr::from_str("any of them").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$a", true);
-            m.insert("$b", false);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(true));
-        operands.entry("$a").and_modify(|b| *b = false);
-        assert_eq!(expr.compute(&operands), Ok(false));
+        assert!(compute("any of them", &[("$a", true), ("$b", false)]));
+        assert!(!compute("any of them", &[("$a", false), ("$b", false)]));
     }
 
     #[test]
     fn test_any_of_vars() {
-        let expr = Expr::from_str("any of $app").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$app1", true);
-            m.insert("$app2", false);
-            m.insert("$b", true);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(true));
-        operands.entry("$app1").and_modify(|b| *b = false);
-        assert_eq!(expr.compute(&operands), Ok(false));
+        assert!(compute(
+            "any of $app",
+            &[("$app1", true), ("$app2", false), ("$b", true)]
+        ));
+        assert!(!compute(
+            "any of $app",
+            &[("$app1", false), ("$app2", false), ("$b", true)]
+        ));
     }
 
     #[test]
     fn test_none_of_them() {
-        let expr = Expr::from_str("none of them").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$a", true);
-            m.insert("$b", false);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(false));
-        operands.entry("$a").and_modify(|b| *b = false);
-        assert_eq!(expr.compute(&operands), Ok(true));
+        assert!(!compute("none of them", &[("$a", true), ("$b", false)]));
+        assert!(compute("none of them", &[("$a", false), ("$b", false)]));
     }
 
     #[test]
     fn test_none_of_vars() {
-        let expr = Expr::from_str("none of $app").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$app1", true);
-            m.insert("$app2", true);
-            m.insert("$b", false);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(false));
-        operands.entry("$app1").and_modify(|b| *b = false);
-        operands.entry("$app2").and_modify(|b| *b = false);
-        assert_eq!(expr.compute(&operands), Ok(true));
+        assert!(!compute(
+            "none of $app",
+            &[("$app1", true), ("$app2", true), ("$b", false)]
+        ));
+        assert!(compute(
+            "none of $app",
+            &[("$app1", false), ("$app2", false), ("$b", true)]
+        ));
     }
 
     #[test]
     fn test_x_of_them() {
-        let expr = Expr::from_str("1 of them").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$a", true);
-            m.insert("$b", false);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(true));
-        operands.entry("$a").and_modify(|b| *b = false);
-        assert_eq!(expr.compute(&operands), Ok(false));
+        assert!(compute("1 of them", &[("$a", true), ("$b", false)]));
+        assert!(!compute("1 of them", &[("$a", false), ("$b", false)]));
+        assert!(!compute("3 of them", &[("$a", true), ("$b", true)]));
     }
 
     #[test]
     fn test_x_of_vars() {
-        let expr = Expr::from_str("1 of $app").unwrap();
-        let mut operands = {
-            let mut m = HashMap::new();
-            m.insert("$app1", true);
-            m.insert("$app2", false);
-            m.insert("$b", true);
-            m
-        };
-
-        assert_eq!(expr.compute(&operands), Ok(true));
-        operands.entry("$app1").and_modify(|b| *b = false);
-        assert_eq!(expr.compute(&operands), Ok(false));
+        assert!(compute(
+            "1 of $app",
+            &[("$app1", true), ("$app2", false), ("$b", true)]
+        ));
+        assert!(!compute(
+            "1 of $app",
+            &[("$app1", false), ("$app2", false), ("$b", true)]
+        ));
     }
 }
