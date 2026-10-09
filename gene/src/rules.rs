@@ -950,6 +950,24 @@ condition: {cond}
     }
 
     #[test]
+    fn test_n_of_overflow() {
+        let test = r#"
+name: test
+matches:
+    $a: .data.field == 'x'
+condition: 99999999999999999999 of them
+"#;
+
+        let d: Rule = serde_yaml::from_str(test).unwrap();
+        assert!(CompiledRule::try_from(d).is_err_and(|e| matches!(
+            e.kind,
+            ErrorKind::Compile(CompileError::Condition(
+                condition::ParseError::InvalidCount(_)
+            ))
+        )));
+    }
+
+    #[test]
     fn test_match_all_rule_operand() {
         let test = r#"
 ---

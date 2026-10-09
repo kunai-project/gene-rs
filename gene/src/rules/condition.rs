@@ -60,6 +60,9 @@ pub enum ParseError {
     /// The condition references an operand not defined in `matches`.
     #[error("unknown operand {0}")]
     UnknownOperand(String),
+    /// The count of an `n of` group doesn't fit in a `usize`.
+    #[error("invalid count in {0}")]
+    InvalidCount(String),
     /// Syntax error in the condition.
     #[error("{0}")]
     Parser(#[from] Box<pest::error::Error<Rule>>),
@@ -198,7 +201,13 @@ fn parse_expr<S: AsRef<str>>(pairs: Pairs<Rule>, operands: &[S]) -> Result<Expr,
             .collect()
     };
     // pest guarantees a leading integer for n_of_* rules
-    let count = |s: &str| s.split_once(' ').unwrap().0.parse::<usize>().unwrap();
+    let count = |s: &str| {
+        s.split_once(' ')
+            .unwrap()
+            .0
+            .parse::<usize>()
+            .map_err(|_| ParseError::InvalidCount(s.into()))
+    };
 
     PRATT_PARSER
         .map_primary(|primary| match primary.as_rule() {
@@ -212,7 +221,7 @@ fn parse_expr<S: AsRef<str>>(pairs: Pairs<Rule>, operands: &[S]) -> Result<Expr,
             Rule::any_of_them | Rule::any_of_vars => Ok(Expr::AnyOf(vars(primary.as_str()))),
             Rule::n_of_them | Rule::n_of_vars => {
                 let idx = vars(primary.as_str());
-                match count(primary.as_str()) {
+                match count(primary.as_str())? {
                     0 => Ok(Expr::NoneOf(idx)),
                     n => Ok(Expr::NOf(n, idx)),
                 }
@@ -366,6 +375,15 @@ mod tests {
         assert_eq!(
             Expr::parse("$a and !$c", &["$a", "$b"]),
             Err(ParseError::UnknownOperand("$c".into()))
+        );
+    }
+
+    #[test]
+    fn test_n_of_overflow() {
+        let cond = "99999999999999999999 of them";
+        assert_eq!(
+            Expr::parse(cond, &["$a"]),
+            Err(ParseError::InvalidCount(cond.into()))
         );
     }
 
