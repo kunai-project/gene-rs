@@ -31,7 +31,7 @@ pub(crate) enum Op {
     Or,
 }
 
-/// Condition expression whose operands are indexes into the rule's matches.
+/// Condition expression whose operands are indexes into the condition's [`Operands`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Expr {
     Variable(usize),
