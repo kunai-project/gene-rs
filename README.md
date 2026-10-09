@@ -127,7 +127,10 @@ severity: 10
 ### Rule Components
 
 - **`name`**: Unique rule identifier
+- **`type`**: `detection` (default) or `filter`
+- **`decision`**: `include` (default) or `exclude` matching events
 - **`meta`**: Metadata including tags, attack IDs, authors
+- **`params`**: Miscellaneous parameters (e.g. `disable`)
 - **`match-on`**: Event type filtering
 - **`matches`**: Field extraction and pattern matching
 - **`condition`**: Boolean logic for detection
@@ -135,48 +138,35 @@ severity: 10
 
 ## Features
 
-### High Performance
-- Optimized for low-latency event processing
-- Efficient pattern matching algorithms
-- Minimal memory overhead
-
 ### Flexible Matching
-- XPath-like field access (`.field.subfield`)
+- Dot-path field access (`.field.subfield`)
 - Regular expression support (`~=` operator)
-- Bitwise operations (`&=`, `|=`, etc.)
-- Comparison operators (`>`, `<`, `==`, etc.)
+- Flag test (`&=` operator)
+- Comparison operators (`==`, `<`, `<=`, `>`, `>=`)
 
 ### Advanced Capabilities
 - **Rule Dependencies**: Chain rules together for complex detection logic
-- **Template System**: Dynamic rule configuration with variable substitution
 - **Metadata Support**: Rich metadata including MITRE ATT&CK mappings
-- **Decision System**: Fine-grained control over event inclusion/exclusion
 
-## Performance Benchmarks
+<!-- cargo-rdme end -->
 
-Benchmarks conducted with real detection rules and security events:
+## Performance
 
-### Hundred-ish Rules (127 rules)
+Scanning real Windows events with 123 real detection rules
+(`cargo bench -p gene --bench engine_benchmark -- scan-with`):
+
 ```text
-Number of scanned events: 1,001,600 (1,327.72 MB)
-Scan duration: 1.28s
-Throughput: 1,037.66 MB/s | 782,784.83 events/s
-Detections: 550
+scan-throughput/scan-with-123-rules
+    time:   [106.15 ms 106.21 ms 106.26 ms]
+    thrpt:  [2.3274 GiB/s 2.3285 GiB/s 2.3297 GiB/s]
 ```
 
-### Thousand-ish Rules (1,016 rules)
-```text
-Number of scanned events: 1,001,600 (1,327.72 MB)
-Scan duration: 9.54s
-Throughput: 139.24 MB/s | 105,042.31 events/s
-Detections: 550
-```
+Measured at commit `cbd8061` on an Intel Core Ultra X7 358H. Throughput is
+computed over the size of the JSON-encoded events, but events are deserialized
+before the measurement, so parsing time is not included. Scan cost grows with
+the number and complexity of rules.
 
-> **Note**: Performance scales with rule complexity. These benchmarks demonstrate
-> that Gene remains efficient even with large rule sets, avoiding bottleneck issues
-> in embedded applications.
-
-### Contributing
+## Contributing
 
 - Report issues on [GitHub](https://github.com/kunai-project/gene-rs/issues)
 - Submit pull requests with clear descriptions
@@ -186,5 +176,3 @@ Detections: 550
 ## License
 
 Gene is licensed under the **GPL-3.0** - see the `LICENSE` file for details.
-
-<!-- cargo-rdme end -->
