@@ -21,8 +21,13 @@ pub enum Error {
     #[error("duplicate rule={0}")]
     DuplicateRule(String),
     /// A rule depends on a rule that isn't loaded.
-    #[error("unknown rule dependency in rule={0}")]
-    UnknownRuleDependency(String),
+    #[error("unknown dependency={dep} in rule={rule}")]
+    UnknownRuleDependency {
+        /// Rule declaring the dependency.
+        rule: String,
+        /// Name of the missing dependency.
+        dep: String,
+    },
     /// A rule's dependency chain is longer than [`MAX_DEPENDENCY_DEPTH`].
     #[error("rule dependency chain deeper than {MAX_DEPENDENCY_DEPTH} in rule={0}")]
     DependencyTooDeep(String),
@@ -141,7 +146,10 @@ impl Compiler {
                 let &d = self
                     .names
                     .get(dep)
-                    .ok_or(Error::UnknownRuleDependency(dep.clone()))?;
+                    .ok_or_else(|| Error::UnknownRuleDependency {
+                        rule: compiled.name.clone(),
+                        dep: dep.clone(),
+                    })?;
                 compiled.max_depth = compiled.max_depth.max(self.compiled[d].max_depth + 1);
             }
 
@@ -238,7 +246,15 @@ condition: any of them
         .unwrap();
 
         // Unknown RuleDependency is checked at compile time
-        assert!(matches!(c.compile(), Err(Error::UnknownRuleDependency(_))));
+        let err = c.compile().unwrap_err();
+        assert!(matches!(
+            &err,
+            Error::UnknownRuleDependency { rule, dep } if rule == "test" && dep == "unknown.dep"
+        ));
+        assert_eq!(
+            err.to_string(),
+            "unknown dependency=unknown.dep in rule=test"
+        );
     }
 
     #[test]
