@@ -157,11 +157,11 @@ Scanning real Windows events with 123 real detection rules
 
 ```text
 scan-throughput/scan-with-123-rules
-    time:   [106.15 ms 106.21 ms 106.26 ms]
-    thrpt:  [2.3274 GiB/s 2.3285 GiB/s 2.3297 GiB/s]
+    time:   [93.405 ms 93.532 ms 93.699 ms]
+    thrpt:  [2.6394 GiB/s 2.6441 GiB/s 2.6477 GiB/s]
 ```
 
-Measured at commit `cbd8061` on an Intel Core Ultra X7 358H. Throughput is
+Measured at commit [`b0b692f`](https://github.com/kunai-project/gene-rs/commit/b0b692f) on an Intel Core Ultra X7 358H. Throughput is
 computed over the size of the JSON-encoded events, but events are deserialized
 before the measurement, so parsing time is not included. Scan cost grows with
 the number and complexity of rules.
