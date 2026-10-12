@@ -1,8 +1,9 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
 };
 
+use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{

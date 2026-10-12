@@ -3,7 +3,7 @@ use super::CompileError;
 use crate::engine::ScanContext;
 use crate::Event;
 use pest::{iterators::Pairs, pratt_parser::PrattParser, Parser};
-use std::{collections::HashMap, hash::Hash, str::FromStr};
+use std::{collections::HashMap, str::FromStr};
 use thiserror::Error;
 
 #[derive(pest_derive::Parser)]
