@@ -446,7 +446,7 @@ impl Rule {
                 ty: self.ty.unwrap_or_default(),
                 decision: self.decision.unwrap_or_default(),
                 depends: HashSet::new(),
-                is_dep: false,
+                dep_state_idx: None,
                 max_depth: 0,
                 tags: HashSet::new(),
                 attack: HashSet::new(),
@@ -533,7 +533,9 @@ pub struct CompiledRule {
     pub(crate) condition: condition::Condition,
     pub(crate) severity: u8,
     pub(crate) actions: HashSet<String>,
-    pub(crate) is_dep: bool,
+    // index of this rule's memoized state in ScanContext::dep_states, set by the
+    // engine once a rule depends on it, shared by all its dependents
+    pub(crate) dep_state_idx: Option<usize>,
     pub(crate) max_depth: usize,
 }
 
@@ -689,6 +691,17 @@ impl CompiledRule {
     #[inline]
     pub fn ty(&self) -> Type {
         self.ty
+    }
+
+    /// Returns `true` if another rule loaded in the same [`Engine`](crate::Engine)
+    /// depends on this rule through `rule(name)`.
+    ///
+    /// This is set when the dependent rule is inserted into the engine, so it is
+    /// always `false` for a rule not loaded in an engine. It is independent of the
+    /// rule's [`Type`]: a detection rule can also be a dependency.
+    #[inline]
+    pub(crate) fn is_dep(&self) -> bool {
+        self.dep_state_idx.is_some()
     }
 }
 

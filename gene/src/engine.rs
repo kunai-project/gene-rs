@@ -555,6 +555,8 @@ struct RuleCacheEntry {
 pub struct Engine {
     // rule names mapping to rule index in rules member
     names: HashMap<String, usize>,
+    // number of dependency states per scan, one per rule used as a dependency
+    n_dep_states: usize,
     // all the rules in the engine
     rules: Vec<CompiledRule>,
     // cache the list of rules indexes to match a given (source, id)
@@ -568,49 +570,61 @@ enum DepState {
     Error(rules::Error),
 }
 
-/// Evaluates rules on demand during a scan, memoizing each result so that a
-/// rule is evaluated at most once per event.
+/// Evaluates rules on demand during a scan, memoizing dependency results so
+/// that a dependency is evaluated at most once per event, however many rules
+/// use it.
 pub(crate) struct ScanContext<'a, E> {
     rules: &'a [CompiledRule],
     event: &'a E,
-    states: HashMap<usize, DepState>,
+    n_dep_states: usize,
+    // indexed by CompiledRule::dep_state_idx, allocated on the first dependency lookup
+    dep_states: Vec<Option<DepState>>,
 }
 
 impl<'a, E> ScanContext<'a, E>
 where
     E: for<'e> Event<'e>,
 {
+    fn new(rules: &'a [CompiledRule], n_dep_states: usize, event: &'a E) -> Self {
+        Self {
+            rules,
+            event,
+            n_dep_states,
+            dep_states: Vec::new(),
+        }
+    }
+
     pub(crate) fn match_rule_at(&mut self, idx: usize) -> Result<bool, rules::Error> {
         let rules = self.rules;
         let r = &rules[idx];
 
         // not a dependency -> evaluate rule
-        if !r.is_dep {
+        let Some(d) = r.dep_state_idx else {
             return r.match_event(self.event, Some(self));
+        };
+
+        if self.dep_states.is_empty() {
+            self.dep_states.resize_with(self.n_dep_states, || None);
         }
 
         // check if rule was already evaluated
-        match self.states.get(&idx) {
+        match &self.dep_states[d] {
             Some(DepState::Match(ok)) => return Ok(*ok),
             Some(DepState::Error(e)) => return Err(e.clone()),
             None => {}
         }
 
         if !r.can_match_on(self.event.source(), self.event.id()) {
-            self.states.insert(idx, DepState::Match(false));
+            self.dep_states[d] = Some(DepState::Match(false));
             return Ok(false);
         }
 
-        match r.match_event(self.event, Some(self)) {
-            Ok(ok) => {
-                self.states.insert(idx, DepState::Match(ok));
-                Ok(ok)
-            }
-            Err(e) => {
-                self.states.insert(idx, DepState::Error(e.clone()));
-                Err(e)
-            }
-        }
+        let res = r.match_event(self.event, Some(self));
+        self.dep_states[d] = Some(match &res {
+            Ok(ok) => DepState::Match(*ok),
+            Err(e) => DepState::Error(e.clone()),
+        });
+        res
     }
 }
 
@@ -648,7 +662,10 @@ impl Engine {
         // dependencies are always inserted before their dependents
         for d in r.depends.iter() {
             if let Some(&i) = self.names.get(d) {
-                self.rules[i].is_dep = true;
+                if !self.rules[i].is_dep() {
+                    self.rules[i].dep_state_idx = Some(self.n_dep_states);
+                    self.n_dep_states += 1;
+                }
             }
         }
         self.names.insert(r.name.clone(), self.rules.len());
@@ -743,11 +760,7 @@ impl Engine {
             }
         };
 
-        let mut ctx = ScanContext {
-            rules: &self.rules,
-            event,
-            states: HashMap::new(),
-        };
+        let mut ctx = ScanContext::new(&self.rules, self.n_dep_states, event);
 
         let mut first_err = None;
 
@@ -1311,8 +1324,8 @@ condition: $chmod or $t
         assert!(sr.includes_detection("a.chmod.etc"));
         assert!(sr.includes_detection("z.chmod.tmp"));
         assert_eq!(ev.count(".cmd"), 1);
-        assert!(e.rules[e.names["chmod"]].is_dep);
-        assert!(!e.rules[e.names["a.chmod.etc"]].is_dep);
+        assert!(e.rules[e.names["chmod"]].is_dep());
+        assert!(!e.rules[e.names["a.chmod.etc"]].is_dep());
     }
 
     #[test]
@@ -1434,11 +1447,7 @@ condition: $dep
         );
 
         let ev = Recorder::new(&[]);
-        let mut ctx = ScanContext {
-            rules: &e.rules,
-            event: &ev,
-            states: HashMap::new(),
-        };
+        let mut ctx = ScanContext::new(&e.rules, e.n_dep_states, &ev);
         let dep = e.names["dep.err"];
 
         let first = ctx.match_rule_at(dep).unwrap_err();
