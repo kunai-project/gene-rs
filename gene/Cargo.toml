@@ -21,6 +21,7 @@ name = "engine_benchmark"
 
 [dependencies]
 gene_derive = { path = "../derive", version = "0.7.6" }
+hashbrown = "0.17.1"
 lazy_static = "1.4.0"
 pest = "2.7.15"
 pest_derive = "2.7.15"

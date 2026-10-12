@@ -379,14 +379,14 @@ impl Rule {
     // `match-on` section)
     fn build_include_events(
         filters: &HashMap<String, HashSet<i64>>,
-    ) -> HashMap<String, HashSet<i64>> {
-        let mut inc = HashMap::new();
+    ) -> hashbrown::HashMap<String, hashbrown::HashSet<i64>> {
+        let mut inc = hashbrown::HashMap::new();
         for (source, events) in filters {
             let events = events
                 .iter()
                 .filter(|&&id| id >= 0)
                 .cloned()
-                .collect::<HashSet<i64>>();
+                .collect::<hashbrown::HashSet<i64>>();
             if !events.is_empty() {
                 inc.insert(source.clone(), events);
             }
@@ -398,14 +398,14 @@ impl Rule {
     // `match-on` section)
     fn build_exclude_events(
         filters: &HashMap<String, HashSet<i64>>,
-    ) -> HashMap<String, HashSet<i64>> {
-        let mut excl = HashMap::new();
+    ) -> hashbrown::HashMap<String, hashbrown::HashSet<i64>> {
+        let mut excl = hashbrown::HashMap::new();
         for (source, events) in filters {
             let events = events
                 .iter()
                 .filter(|&&id| id < 0)
                 .map(|id| id.abs())
-                .collect::<HashSet<i64>>();
+                .collect::<hashbrown::HashSet<i64>>();
             if !events.is_empty() {
                 excl.insert(source.clone(), events);
             }
@@ -445,7 +445,7 @@ impl Rule {
                 name: self.name,
                 ty: self.ty.unwrap_or_default(),
                 decision: self.decision.unwrap_or_default(),
-                depends: HashSet::new(),
+                depends: hashbrown::HashSet::new(),
                 dep_state_idx: None,
                 max_depth: 0,
                 tags: HashSet::new(),
@@ -525,11 +525,11 @@ pub struct CompiledRule {
     pub(crate) name: String,
     pub(crate) ty: Type,
     pub(crate) decision: Decision,
-    pub(crate) depends: HashSet<String>,
+    pub(crate) depends: hashbrown::HashSet<String>,
     pub(crate) tags: HashSet<String>,
     pub(crate) attack: HashSet<String>,
-    pub(crate) include_events: HashMap<String, HashSet<i64>>,
-    pub(crate) exclude_events: HashMap<String, HashSet<i64>>,
+    pub(crate) include_events: hashbrown::HashMap<String, hashbrown::HashSet<i64>>,
+    pub(crate) exclude_events: hashbrown::HashMap<String, hashbrown::HashSet<i64>>,
     pub(crate) condition: condition::Condition,
     pub(crate) severity: u8,
     pub(crate) actions: HashSet<String>,
