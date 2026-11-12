@@ -1,0 +1,11 @@
+[package]
+name = "gene_utf8"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Crate defining how gene-rs writes raw bytes as text"
+documentation = "https://docs.rs/gene_utf8"
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
