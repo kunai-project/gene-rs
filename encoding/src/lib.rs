@@ -1,4 +1,7 @@
-//! How gene represents raw data (e.g. Linux paths) as text.
+//! How gene represents raw data (e.g. Linux paths) as text, and back.
+//!
+//! [`escape_invalid_utf8`] keeps valid UTF-8 as is and writes each invalid
+//! byte as `\xNN`; [`unescape_invalid_utf8`] restores the exact bytes.
 //!
 //! These formats are part of gene's rule language: a rule matching `\xff`
 //! must match the same bytes in every program using gene. Any change to a
