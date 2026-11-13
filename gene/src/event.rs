@@ -420,7 +420,7 @@ mod test {
         #[getter(skip)]
         #[allow(dead_code)]
         osef: u32,
-        path: PathBuf,
+        path: crate::RawPath,
     }
 
     // this is just a show case, it would be
@@ -450,7 +450,7 @@ mod test {
                 some_string: "some string".into(),
                 id: 42,
                 osef: 34,
-                path: PathBuf::from("/absolute/path"),
+                path: PathBuf::from("/absolute/path").into(),
             },
             t: 24,
         };
@@ -486,7 +486,7 @@ mod test {
 
         assert_eq!(entry.get_from_path(&path!(".t")), Some(24.into()));
 
-        // getting a PathBuf must return a FieldValue::String
+        // getting a RawPath must return a FieldValue::String
         assert_eq!(
             entry.get_from_path(&path!(".data.path")),
             Some("/absolute/path".into())

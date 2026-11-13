@@ -996,7 +996,12 @@ name: test
     }
 
     #[test]
-    fn test_path_buf_matching() {
+    #[cfg(unix)]
+    fn test_raw_path_matching() {
+        use crate::RawPath;
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        // rules see invalid UTF-8 bytes as `\xNN`, the way they are serialized
         let test = r#"
 ---
 name: test
@@ -1004,8 +1009,9 @@ match-on:
     events:
         test: [42]
 matches:
-    $a: .path == "/some/path"
-condition: $a
+    $a: .path == '/some/\xff'
+    $b: .path ~= '\\xff$'
+condition: $a and $b
 ..."#;
 
         let d: Rule = serde_yaml::from_str(test).unwrap();
@@ -1013,17 +1019,13 @@ condition: $a
 
         def_event!(
             pub struct Dummy {
-                path: PathBuf,
+                path: RawPath,
             }
         );
 
+        let path = PathBuf::from(OsString::from_vec(b"/some/\xff".to_vec()));
         assert!(cr
-            .match_event(
-                &(Dummy {
-                    path: PathBuf::from("/some/path")
-                }),
-                None
-            )
+            .match_event(&(Dummy { path: path.into() }), None)
             .unwrap());
     }
 
