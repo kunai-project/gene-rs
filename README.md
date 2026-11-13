@@ -140,7 +140,7 @@ severity: 10
 
 ### Flexible Matching
 - Dot-path field access (`.field.subfield`)
-- Regular expression support (`~=` operator)
+- Regular expression support (`~=` or `matches` operator, `imatches` for case-insensitive)
 - Flag test (`&=` operator)
 - Comparison operators (`==`, `<`, `<=`, `>`, `>=`)
 
