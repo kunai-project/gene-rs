@@ -162,6 +162,10 @@ pub use values::FieldValue;
 mod paths;
 pub use paths::XPath;
 
+mod raw_path;
+pub use gene_encoding::escape_invalid_utf8;
+pub use raw_path::RawPath;
+
 mod template;
 pub use template::Templates;
 

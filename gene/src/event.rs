@@ -1,11 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    net::IpAddr,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{borrow::Cow, collections::HashMap, net::IpAddr, rc::Rc, sync::Arc};
 
 use crate::{FieldValue, XPath};
 
@@ -274,8 +267,6 @@ macro_rules! impl_for_type {
 
 impl_for_type!(
     Cow<'_, str>,
-    Cow<'_, PathBuf>,
-    Cow<'_, Path>,
     &'_ str,
     str,
     String,
@@ -294,11 +285,7 @@ impl_for_type!(
     bool
 );
 
-impl_with_getter!(
-    (Path, to_string_lossy),
-    (PathBuf, to_string_lossy),
-    (IpAddr, to_string)
-);
+impl_with_getter!((IpAddr, to_string));
 
 #[cfg(feature = "uuid")]
 impl_with_getter!((uuid::Uuid, to_string));
@@ -379,7 +366,6 @@ macro_rules! impl_field_getter_for_vec {
 impl_field_getter_for_vec!(
     String,
     Cow<'f, str>,
-    Cow<'f, PathBuf>,
     &'f str,
     i8,
     i16,
@@ -396,7 +382,7 @@ impl_field_getter_for_vec!(
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
+    use std::{path::PathBuf, str::FromStr};
 
     use gene_derive::{Event, FieldGetter};
     use serde::Deserialize;
@@ -420,7 +406,7 @@ mod test {
         #[getter(skip)]
         #[allow(dead_code)]
         osef: u32,
-        path: PathBuf,
+        path: crate::RawPath<'static>,
     }
 
     // this is just a show case, it would be
@@ -450,7 +436,7 @@ mod test {
                 some_string: "some string".into(),
                 id: 42,
                 osef: 34,
-                path: PathBuf::from("/absolute/path"),
+                path: PathBuf::from("/absolute/path").into(),
             },
             t: 24,
         };
@@ -486,7 +472,7 @@ mod test {
 
         assert_eq!(entry.get_from_path(&path!(".t")), Some(24.into()));
 
-        // getting a PathBuf must return a FieldValue::String
+        // getting a RawPath must return a FieldValue::String
         assert_eq!(
             entry.get_from_path(&path!(".data.path")),
             Some("/absolute/path".into())
