@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["derive", "gene", "utf8"]
+members = ["derive", "gene", "encoding"]
 
 [workspace.package]
 version = "0.8.0"

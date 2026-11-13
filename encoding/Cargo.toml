@@ -1,10 +1,10 @@
 [package]
-name = "gene_utf8"
+name = "gene_encoding"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Crate defining how gene-rs writes raw bytes as text"
-documentation = "https://docs.rs/gene_utf8"
+description = "Crate defining how gene-rs represents raw data as text"
+documentation = "https://docs.rs/gene_encoding"
 repository.workspace = true
 license.workspace = true
 
