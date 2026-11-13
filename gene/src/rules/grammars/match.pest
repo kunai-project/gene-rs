@@ -24,7 +24,7 @@ lt   = { "<" }
 lte  = { "<=" }
 gt   = { ">" }
 gte  = { ">=" }
-rex  = { "~=" }
+rex  = { "~=" | "matches" }
 flag = { "&=" }
 
 _direct_match = _{ SOI ~ "\""? ~ field_path ~ "\""? ~ op ~ value ~ EOI }

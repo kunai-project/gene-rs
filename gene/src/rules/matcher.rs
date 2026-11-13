@@ -710,6 +710,15 @@ mod test {
     }
 
     #[test]
+    fn test_matches_is_regex_operator() {
+        let dm = DirectMatch::from_str(r#".data.exe.path matches '(?i)/bash$'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/BASH".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bash.sh".into()).unwrap());
+
+        assert!(DirectMatch::from_str(r#".data.exe.path matches 42"#).is_err());
+    }
+
+    #[test]
     fn test_indirect_match() {
         let im = IndirectMatch::from_str(r#".data.exe.size == @.data."field with space""#)
             .map_err(|e| {
