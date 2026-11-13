@@ -97,10 +97,8 @@ impl<'f> FieldGetter<'f> for RawPath<'_> {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
-    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-
     use gene_derive::FieldGetter;
 
     use super::*;
@@ -111,40 +109,14 @@ mod tests {
         path: RawPath<'a>,
     }
 
-    fn invalid_utf8_path() -> RawPath<'static> {
-        PathBuf::from(OsString::from_vec(b"/tmp/\xff".to_vec())).into()
-    }
-
     fn get<'f>(file: &'f File<'_>, path: &str) -> Option<FieldValue<'f>> {
         file.get_from_path(&XPath::parse(path).unwrap())
     }
 
     #[test]
-    fn test_field_getter_escapes_borrowed_path() {
-        let owned = invalid_utf8_path();
-        let file = File {
-            path: RawPath::from(&*owned),
-        };
-        assert_eq!(get(&file, ".path"), Some("/tmp/\\xff".into()));
-    }
-
-    #[test]
-    fn test_escaped() {
-        assert_eq!(invalid_utf8_path().escaped(), "/tmp/\\xff");
-    }
-
-    #[test]
     fn test_as_ref_path() {
-        let path = RawPath::from(Path::new("/tmp"));
+        let path = RawPath::from(std::env::temp_dir());
         assert!(std::fs::metadata(&path).is_ok());
-    }
-
-    #[test]
-    fn test_field_getter_escapes_invalid_utf8() {
-        let file = File {
-            path: invalid_utf8_path(),
-        };
-        assert_eq!(get(&file, ".path"), Some("/tmp/\\xff".into()));
     }
 
     #[test]
@@ -164,20 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_escapes_invalid_utf8() {
-        assert_eq!(
-            serde_json::to_string(&invalid_utf8_path()).unwrap(),
-            r#""/tmp/\\xff""#
-        );
-    }
-
-    #[test]
-    fn test_deserialize_restores_raw_bytes() {
-        let path: RawPath = serde_json::from_str(r#""/tmp/\\xff""#).unwrap();
-        assert_eq!(path, invalid_utf8_path());
-    }
-
-    #[test]
     fn test_deserialize_keeps_literal_escape_text() {
         let path: RawPath = serde_json::from_str(r#""/tmp/\\\\xff""#).unwrap();
         assert_eq!(path, PathBuf::from(r"/tmp/\xff").into());
@@ -185,8 +143,7 @@ mod tests {
 
     #[test]
     fn test_serde_round_trip() {
-        let paths = [
-            invalid_utf8_path(),
+        let paths: [RawPath; 3] = [
             PathBuf::from(r"/tmp/\xff").into(),
             PathBuf::from(r"C:\Windows\System32").into(),
             PathBuf::from("/tmp/é").into(),
@@ -198,11 +155,70 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_deref_keeps_raw_bytes() {
-        assert_eq!(
-            invalid_utf8_path().as_os_str().as_encoded_bytes(),
-            b"/tmp/\xff"
-        );
+    // Only Unix paths can hold arbitrary bytes, so invalid UTF-8 paths can
+    // only be built there.
+    #[cfg(unix)]
+    mod unix {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        use super::*;
+
+        fn invalid_utf8_path() -> RawPath<'static> {
+            PathBuf::from(OsString::from_vec(b"/tmp/\xff".to_vec())).into()
+        }
+
+        #[test]
+        fn test_field_getter_escapes_borrowed_path() {
+            let owned = invalid_utf8_path();
+            let file = File {
+                path: RawPath::from(&*owned),
+            };
+            assert_eq!(get(&file, ".path"), Some("/tmp/\\xff".into()));
+        }
+
+        #[test]
+        fn test_escaped() {
+            assert_eq!(invalid_utf8_path().escaped(), "/tmp/\\xff");
+        }
+
+        #[test]
+        fn test_field_getter_escapes_invalid_utf8() {
+            let file = File {
+                path: invalid_utf8_path(),
+            };
+            assert_eq!(get(&file, ".path"), Some("/tmp/\\xff".into()));
+        }
+
+        #[test]
+        fn test_serialize_escapes_invalid_utf8() {
+            assert_eq!(
+                serde_json::to_string(&invalid_utf8_path()).unwrap(),
+                r#""/tmp/\\xff""#
+            );
+        }
+
+        #[test]
+        fn test_deserialize_restores_raw_bytes() {
+            let path: RawPath = serde_json::from_str(r#""/tmp/\\xff""#).unwrap();
+            assert_eq!(path, invalid_utf8_path());
+        }
+
+        #[test]
+        fn test_deref_keeps_raw_bytes() {
+            assert_eq!(
+                invalid_utf8_path().as_os_str().as_encoded_bytes(),
+                b"/tmp/\xff"
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    mod not_unix {
+        use super::*;
+
+        #[test]
+        fn test_deserialize_rejects_invalid_utf8() {
+            assert!(serde_json::from_str::<RawPath>(r#""/tmp/\\xff""#).is_err());
+        }
     }
 }
