@@ -6,7 +6,7 @@ use pest::{
     Parser, Span,
 };
 use pest_derive::Parser;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use thiserror::Error;
 
 use crate::{
@@ -180,8 +180,12 @@ impl Error {
 }
 
 impl MatchValue {
-    fn value_regex(s: &str) -> Result<Self, ParseError> {
-        Regex::new(s).map(Self::Regex).map_err(|e| e.into())
+    fn value_regex(s: &str, is_case_insensitive: bool) -> Result<Self, ParseError> {
+        RegexBuilder::new(s)
+            .case_insensitive(is_case_insensitive)
+            .build()
+            .map(Self::Regex)
+            .map_err(|e| e.into())
     }
 
     fn value_number<S: AsRef<str>>(s: S) -> Result<Self, ParseError> {
@@ -324,6 +328,7 @@ enum Op {
     Gt,
     Gte,
     Rex,
+    IRex,
     Flag,
 }
 
@@ -340,6 +345,7 @@ impl Op {
             Rule::gte => Op::Gte,
             Rule::gt => Op::Gt,
             Rule::rex => Op::Rex,
+            Rule::irex => Op::IRex,
             Rule::flag => Op::Flag,
             // cannot be something else
             _ => unreachable!(),
@@ -400,11 +406,20 @@ impl MatchValue {
                     _ => Err(ParseError::new("value must be a number", span)),
                 }
             }
-            Op::Rex => match inner_pair.as_rule() {
-                Rule::value_dq => MatchValue::value_regex(inner_pair.as_str().trim_matches('"')),
-                Rule::value_sq => MatchValue::value_regex(inner_pair.as_str().trim_matches('\'')),
-                _ => Err(ParseError::new("value must be a quoted string", span)),
-            },
+            Op::Rex | Op::IRex => {
+                let is_case_insensitive = matches!(op, Op::IRex);
+                match inner_pair.as_rule() {
+                    Rule::value_dq => MatchValue::value_regex(
+                        inner_pair.as_str().trim_matches('"'),
+                        is_case_insensitive,
+                    ),
+                    Rule::value_sq => MatchValue::value_regex(
+                        inner_pair.as_str().trim_matches('\''),
+                        is_case_insensitive,
+                    ),
+                    _ => Err(ParseError::new("value must be a quoted string", span)),
+                }
+            }
         }
     }
 }
@@ -552,7 +567,7 @@ impl DirectMatch {
                     Err(())
                 }
             }
-            Op::Rex => {
+            Op::Rex | Op::IRex => {
                 if let (MatchValue::Regex(v), FieldValue::String(o)) = (&self.value, &fv) {
                     Ok(v.is_match(o))
                 } else {
@@ -716,6 +731,19 @@ mod test {
         assert!(!dm.match_value(&"/usr/bin/bash.sh".into()).unwrap());
 
         assert!(DirectMatch::from_str(r#".data.exe.path matches 42"#).is_err());
+    }
+
+    #[test]
+    fn test_imatches_is_case_insensitive_regex_operator() {
+        let dm = DirectMatch::from_str(r#".data.exe.path imatches '/bash$'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/BASH".into()).unwrap());
+        assert!(dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bash.sh".into()).unwrap());
+
+        let dm = DirectMatch::from_str(r#".data.exe.path matches '/bash$'"#).unwrap();
+        assert!(!dm.match_value(&"/usr/bin/BASH".into()).unwrap());
+
+        assert!(DirectMatch::from_str(r#".data.exe.path imatches 42"#).is_err());
     }
 
     #[test]
