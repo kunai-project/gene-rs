@@ -18,27 +18,44 @@ use crate::{escape_invalid_utf8, FieldGetter, FieldNameIterator, FieldValue};
 /// back with its exact bytes. It derefs to [`std::path::Path`] for file
 /// operations.
 ///
+/// It either borrows or owns its path, so an event can borrow a path
+/// from elsewhere instead of copying it.
+///
 /// Outside Unix, deserializing fails when the decoded bytes are not valid
 /// UTF-8, as there is no safe way to build such a path there.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub struct RawPath(PathBuf);
+pub struct RawPath<'a>(Cow<'a, Path>);
 
-impl RawPath {
-    fn escaped(&self) -> Cow<'_, str> {
+impl RawPath<'_> {
+    /// Returns the path as rules and serializers see it, with invalid
+    /// UTF-8 bytes escaped by [`escape_invalid_utf8`](crate::escape_invalid_utf8).
+    pub fn escaped(&self) -> Cow<'_, str> {
         escape_invalid_utf8(self.0.as_os_str().as_encoded_bytes())
     }
 }
 
-impl From<PathBuf> for RawPath {
-    fn from(path: PathBuf) -> Self {
-        Self(path)
+impl<'a> From<&'a Path> for RawPath<'a> {
+    fn from(path: &'a Path) -> Self {
+        Self(Cow::Borrowed(path))
     }
 }
 
-impl Deref for RawPath {
+impl From<PathBuf> for RawPath<'_> {
+    fn from(path: PathBuf) -> Self {
+        Self(Cow::Owned(path))
+    }
+}
+
+impl Deref for RawPath<'_> {
     type Target = Path;
 
     fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for RawPath<'_> {
+    fn as_ref(&self) -> &Path {
         &self.0
     }
 }
@@ -54,23 +71,23 @@ fn path_from_bytes(bytes: Vec<u8>) -> Option<PathBuf> {
     String::from_utf8(bytes).ok().map(PathBuf::from)
 }
 
-impl<'de> Deserialize<'de> for RawPath {
+impl<'de> Deserialize<'de> for RawPath<'_> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
         let bytes = unescape_invalid_utf8(&text).into_owned();
         path_from_bytes(bytes)
-            .map(Self)
+            .map(Self::from)
             .ok_or_else(|| D::Error::custom("path is not valid UTF-8 on this platform"))
     }
 }
 
-impl Serialize for RawPath {
+impl Serialize for RawPath<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.escaped())
     }
 }
 
-impl<'f> FieldGetter<'f> for RawPath {
+impl<'f> FieldGetter<'f> for RawPath<'_> {
     #[inline]
     fn get_from_iter(&'f self, i: FieldNameIterator<'_>) -> Option<FieldValue<'f>> {
         if !i.is_terminal() {
@@ -90,16 +107,36 @@ mod tests {
     use crate::XPath;
 
     #[derive(FieldGetter)]
-    struct File {
-        path: RawPath,
+    struct File<'a> {
+        path: RawPath<'a>,
     }
 
-    fn invalid_utf8_path() -> RawPath {
+    fn invalid_utf8_path() -> RawPath<'static> {
         PathBuf::from(OsString::from_vec(b"/tmp/\xff".to_vec())).into()
     }
 
-    fn get<'f>(file: &'f File, path: &str) -> Option<FieldValue<'f>> {
+    fn get<'f>(file: &'f File<'_>, path: &str) -> Option<FieldValue<'f>> {
         file.get_from_path(&XPath::parse(path).unwrap())
+    }
+
+    #[test]
+    fn test_field_getter_escapes_borrowed_path() {
+        let owned = invalid_utf8_path();
+        let file = File {
+            path: RawPath::from(&*owned),
+        };
+        assert_eq!(get(&file, ".path"), Some("/tmp/\\xff".into()));
+    }
+
+    #[test]
+    fn test_escaped() {
+        assert_eq!(invalid_utf8_path().escaped(), "/tmp/\\xff");
+    }
+
+    #[test]
+    fn test_as_ref_path() {
+        let path = RawPath::from(Path::new("/tmp"));
+        assert!(std::fs::metadata(&path).is_ok());
     }
 
     #[test]

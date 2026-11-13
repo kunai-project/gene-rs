@@ -1019,7 +1019,7 @@ condition: $a and $b
 
         def_event!(
             pub struct Dummy {
-                path: RawPath,
+                path: RawPath<'static>,
             }
         );
 

@@ -406,7 +406,7 @@ mod test {
         #[getter(skip)]
         #[allow(dead_code)]
         osef: u32,
-        path: crate::RawPath,
+        path: crate::RawPath<'static>,
     }
 
     // this is just a show case, it would be
