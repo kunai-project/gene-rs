@@ -1,11 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    net::IpAddr,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{borrow::Cow, collections::HashMap, net::IpAddr, rc::Rc, sync::Arc};
 
 use crate::{FieldValue, XPath};
 
@@ -274,8 +267,6 @@ macro_rules! impl_for_type {
 
 impl_for_type!(
     Cow<'_, str>,
-    Cow<'_, PathBuf>,
-    Cow<'_, Path>,
     &'_ str,
     str,
     String,
@@ -294,11 +285,7 @@ impl_for_type!(
     bool
 );
 
-impl_with_getter!(
-    (Path, to_string_lossy),
-    (PathBuf, to_string_lossy),
-    (IpAddr, to_string)
-);
+impl_with_getter!((IpAddr, to_string));
 
 #[cfg(feature = "uuid")]
 impl_with_getter!((uuid::Uuid, to_string));
@@ -379,7 +366,6 @@ macro_rules! impl_field_getter_for_vec {
 impl_field_getter_for_vec!(
     String,
     Cow<'f, str>,
-    Cow<'f, PathBuf>,
     &'f str,
     i8,
     i16,
@@ -396,7 +382,7 @@ impl_field_getter_for_vec!(
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
+    use std::{path::PathBuf, str::FromStr};
 
     use gene_derive::{Event, FieldGetter};
     use serde::Deserialize;

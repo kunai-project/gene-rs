@@ -51,7 +51,6 @@
 use std::{
     borrow::Cow,
     num::{ParseFloatError, ParseIntError, TryFromIntError},
-    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -440,44 +439,6 @@ impl<'s> From<&'s Cow<'s, str>> for FieldValue<'s> {
     }
 }
 
-// Reuses the PathBuf buffer for UTF-8 paths
-#[inline]
-fn pathbuf_into_string(p: PathBuf) -> String {
-    p.into_os_string()
-        .into_string()
-        .unwrap_or_else(|s| s.to_string_lossy().into_owned())
-}
-
-impl<'s> From<Cow<'s, PathBuf>> for FieldValue<'s> {
-    fn from(value: Cow<'s, PathBuf>) -> Self {
-        match value {
-            Cow::Borrowed(p) => p.to_string_lossy().into(),
-            Cow::Owned(p) => pathbuf_into_string(p).into(),
-        }
-    }
-}
-
-impl<'s> From<&'s Cow<'s, PathBuf>> for FieldValue<'s> {
-    fn from(value: &'s Cow<'s, PathBuf>) -> Self {
-        value.to_string_lossy().into()
-    }
-}
-
-impl<'s> From<Cow<'s, Path>> for FieldValue<'s> {
-    fn from(value: Cow<'s, Path>) -> Self {
-        match value {
-            Cow::Borrowed(p) => p.to_string_lossy().into(),
-            Cow::Owned(p) => pathbuf_into_string(p).into(),
-        }
-    }
-}
-
-impl<'s> From<&'s Cow<'s, Path>> for FieldValue<'s> {
-    fn from(value: &'s Cow<'s, Path>) -> Self {
-        value.to_string_lossy().into()
-    }
-}
-
 impl<'s> From<&'s str> for FieldValue<'s> {
     fn from(value: &'s str) -> Self {
         Self::String(Cow::Borrowed(value))
@@ -499,18 +460,6 @@ impl From<String> for FieldValue<'_> {
 impl<'s> From<&'s String> for FieldValue<'s> {
     fn from(value: &'s String) -> Self {
         Self::String(Cow::from(value))
-    }
-}
-
-impl From<PathBuf> for FieldValue<'_> {
-    fn from(value: PathBuf) -> Self {
-        value.to_string_lossy().to_string().into()
-    }
-}
-
-impl<'f> From<&'f PathBuf> for FieldValue<'f> {
-    fn from(value: &'f PathBuf) -> Self {
-        value.to_string_lossy().into()
     }
 }
 
@@ -580,9 +529,6 @@ impl_field_value_vec_conversions!(
     String,
     &'s str,
     Cow<'s, str>,
-    Cow<'s, Path>,
-    Cow<'s, PathBuf>,
-    PathBuf,
     i8,
     i16,
     i32,
