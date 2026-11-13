@@ -709,7 +709,6 @@ impl CompiledRule {
 mod test {
     use std::borrow::Cow;
     use std::net::IpAddr;
-    use std::path::PathBuf;
 
     use super::*;
     use crate::{Event, FieldGetter, FieldNameIterator, FieldValue};
@@ -999,6 +998,7 @@ name: test
     #[cfg(unix)]
     fn test_raw_path_matching() {
         use crate::RawPath;
+        use std::path::PathBuf;
         use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
         // rules see invalid UTF-8 bytes as `\xNN`, the way they are serialized
