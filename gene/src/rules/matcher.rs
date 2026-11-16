@@ -206,6 +206,8 @@ impl Match {
     /// Rough relative evaluation cost, used to evaluate cheap operands first.
     pub(crate) const fn cost(&self) -> u8 {
         match self {
+            // scans the whole field, unlike equality
+            Self::Direct(d) if matches!(d.op, Op::Contains | Op::IContains) => 2,
             Self::Direct(d) => match d.value {
                 MatchValue::Bool(_)
                 | MatchValue::Number(_)
@@ -986,6 +988,24 @@ mod test {
             assert!(dm.match_value(&42.into()).is_err());
             assert!(dm.match_value(&FieldValue::Bool(true)).is_err());
             assert!(dm.match_value(&FieldValue::None).is_err());
+        }
+    }
+
+    fn direct_match_cost(rule: &str) -> u8 {
+        Match::from(DirectMatch::from_str(rule).unwrap()).cost()
+    }
+
+    #[test]
+    fn test_contains_cost_between_equality_and_regex() {
+        let equality_cost = direct_match_cost(".data.field == 'x'");
+        let regex_cost = direct_match_cost(".data.field matches 'x'");
+        for op in ["contains", "icontains"] {
+            let contains_cost = direct_match_cost(&format!(".data.field {op} 'x'"));
+            assert!(equality_cost < contains_cost, "{op} must cost more than ==");
+            assert!(
+                contains_cost < regex_cost,
+                "{op} must cost less than matches"
+            );
         }
     }
 
