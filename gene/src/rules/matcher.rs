@@ -450,6 +450,20 @@ impl MatchValue {
                 if value.is_empty() && !matches!(op, Op::IEq) {
                     return Err(ParseError::new("value must not be empty", span));
                 }
+                // these operators fold ASCII only, a non-ASCII cased letter would silently stay case-sensitive
+                let is_ascii_folding = matches!(
+                    op,
+                    Op::IEq | Op::IContains | Op::IStartsWith | Op::IEndsWith
+                );
+                let has_non_ascii_cased_letter = value
+                    .chars()
+                    .any(|c| !c.is_ascii() && (c.is_uppercase() || c.is_lowercase()));
+                if is_ascii_folding && has_non_ascii_cased_letter {
+                    return Err(ParseError::new(
+                        "value must not contain non-ASCII cased letters, use imatches instead",
+                        span,
+                    ));
+                }
                 Ok(MatchValue::String(value.into()))
             }
         }
@@ -920,11 +934,6 @@ mod test {
         assert!(dm.match_value(&"/USR/BIN/BASH".into()).unwrap());
         assert!(!dm.match_value(&"/usr/bin/bash.sh".into()).unwrap());
         assert!(!dm.match_value(&"/usr/bin/bas".into()).unwrap());
-
-        // non-ASCII letters are not folded
-        let dm = DirectMatch::from_str(r#".data.field iequals 'É'"#).unwrap();
-        assert!(dm.match_value(&"É".into()).unwrap());
-        assert!(!dm.match_value(&"é".into()).unwrap());
     }
 
     #[test]
@@ -996,11 +1005,6 @@ mod test {
         assert!(dm.match_value(&"BIN/ba".into()).unwrap());
         assert!(!dm.match_value(&"/usr/bin/zsh".into()).unwrap());
         assert!(!dm.match_value(&"bin".into()).unwrap());
-
-        // non-ASCII letters are not folded
-        let dm = DirectMatch::from_str(r#".data.field icontains 'É'"#).unwrap();
-        assert!(dm.match_value(&"CAFÉ".into()).unwrap());
-        assert!(!dm.match_value(&"café".into()).unwrap());
     }
 
     #[test]
@@ -1081,14 +1085,9 @@ mod test {
         assert!(!dm.match_value(&"/bin/usr/bin".into()).unwrap());
         assert!(!dm.match_value(&"/usr".into()).unwrap());
 
-        // non-ASCII letters are not folded
-        let dm = DirectMatch::from_str(r#".data.field istartswith 'É'"#).unwrap();
-        assert!(dm.match_value(&"ÉTÉ".into()).unwrap());
-        assert!(!dm.match_value(&"été".into()).unwrap());
-
         // the pattern length falls inside a multi-byte character of the field
-        let dm = DirectMatch::from_str(r#".data.field istartswith 'é'"#).unwrap();
-        assert!(!dm.match_value(&"aé".into()).unwrap());
+        let dm = DirectMatch::from_str(r#".data.field istartswith '™'"#).unwrap();
+        assert!(!dm.match_value(&"a™".into()).unwrap());
     }
 
     #[test]
@@ -1113,14 +1112,42 @@ mod test {
         assert!(!dm.match_value(&"/bash/usr".into()).unwrap());
         assert!(!dm.match_value(&"bash".into()).unwrap());
 
-        // non-ASCII letters are not folded
-        let dm = DirectMatch::from_str(r#".data.field iendswith 'É'"#).unwrap();
-        assert!(dm.match_value(&"CAFÉ".into()).unwrap());
-        assert!(!dm.match_value(&"café".into()).unwrap());
-
         // the pattern length falls inside a multi-byte character of the field
         let dm = DirectMatch::from_str(r#".data.field iendswith 'a'"#).unwrap();
         assert!(!dm.match_value(&"aé".into()).unwrap());
+    }
+
+    const ASCII_FOLDING_OPS: [&str; 4] = ["iequals", "icontains", "istartswith", "iendswith"];
+
+    #[test]
+    fn test_ascii_folding_ops_reject_non_ascii_cased_letters() {
+        for op in ASCII_FOLDING_OPS {
+            assert_rejects(op, &["'É'", "\"é\"", "'café'", "'Straße'", "'Ω'"]);
+            // uncased non-ASCII characters have nothing to fold
+            assert_parses(op, &["'™'", "'日本'", "'😀'", "'a™'"]);
+        }
+    }
+
+    #[test]
+    fn test_non_ascii_cased_letter_error_points_to_imatches() {
+        for op in ASCII_FOLDING_OPS {
+            let error = DirectMatch::from_str(&format!(".data.field {op} 'É'")).unwrap_err();
+            assert!(error.to_string().contains("imatches"), "{op}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_case_sensitive_ops_accept_non_ascii_cased_letters() {
+        for op in [
+            "==",
+            "contains",
+            "startswith",
+            "endswith",
+            "matches",
+            "imatches",
+        ] {
+            assert_parses(op, &["'É'", "'café'"]);
+        }
     }
 
     #[test]
