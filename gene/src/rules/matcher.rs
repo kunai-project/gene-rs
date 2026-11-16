@@ -206,6 +206,8 @@ impl Match {
     /// Rough relative evaluation cost, used to evaluate cheap operands first.
     pub(crate) const fn cost(&self) -> u8 {
         match self {
+            // scans the whole field, unlike equality
+            Self::Direct(d) if matches!(d.op, Op::Contains | Op::IContains) => 2,
             Self::Direct(d) => match d.value {
                 MatchValue::Bool(_)
                 | MatchValue::Number(_)
@@ -331,6 +333,8 @@ enum Op {
     IRex,
     Flag,
     IEq,
+    Contains,
+    IContains,
 }
 
 impl Op {
@@ -345,6 +349,8 @@ impl Op {
             Rule::irex => Op::IRex,
             Rule::flag => Op::Flag,
             Rule::ieq => Op::IEq,
+            Rule::contains => Op::Contains,
+            Rule::icontains => Op::IContains,
             // cannot be something else
             _ => unreachable!(),
         }
@@ -419,16 +425,19 @@ impl MatchValue {
                     _ => unreachable!(),
                 }
             }
-            Op::IEq => match inner_pair.as_rule() {
-                Rule::value_dq => Ok(MatchValue::String(
-                    inner_pair.as_str().trim_matches('"').into(),
-                )),
-                Rule::value_sq => Ok(MatchValue::String(
-                    inner_pair.as_str().trim_matches('\'').into(),
-                )),
-                // the grammar only allows quoted strings
-                _ => unreachable!(),
-            },
+            Op::IEq | Op::Contains | Op::IContains => {
+                let value = match inner_pair.as_rule() {
+                    Rule::value_dq => inner_pair.as_str().trim_matches('"'),
+                    Rule::value_sq => inner_pair.as_str().trim_matches('\''),
+                    // the grammar only allows quoted strings
+                    _ => unreachable!(),
+                };
+                // an empty search value would match any string
+                if value.is_empty() && !matches!(op, Op::IEq) {
+                    return Err(ParseError::new("value must not be empty", span));
+                }
+                Ok(MatchValue::String(value.into()))
+            }
         }
     }
 }
@@ -585,6 +594,23 @@ impl DirectMatch {
             Op::IEq => {
                 if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
                     Ok(o.eq_ignore_ascii_case(v))
+                } else {
+                    Err(())
+                }
+            }
+            Op::Contains => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    Ok(o.contains(v.as_str()))
+                } else {
+                    Err(())
+                }
+            }
+            Op::IContains => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    // the parser rejects empty values, so windows() cannot panic on 0
+                    Ok(o.as_bytes()
+                        .windows(v.len())
+                        .any(|window| window.eq_ignore_ascii_case(v.as_bytes())))
                 } else {
                     Err(())
                 }
@@ -888,6 +914,99 @@ mod test {
         assert!(dm.match_value(&42.into()).is_err());
         assert!(dm.match_value(&FieldValue::Bool(true)).is_err());
         assert!(dm.match_value(&FieldValue::None).is_err());
+    }
+
+    #[test]
+    fn test_contains_accepted_values() {
+        for op in ["contains", "icontains"] {
+            assert_parses(op, &["'text'", "\"text\"", "'123'", "\"123\"", "'0x40'"]);
+            // an empty value would always match
+            assert_rejects(
+                op,
+                &[
+                    "none", "some", "true", "false", "42", "0x40", "text", "''", "\"\"",
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn test_contains_is_case_sensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path contains 'bin/Ba'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/Bash".into()).unwrap());
+        assert!(dm.match_value(&"bin/Ba".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(!dm.match_value(&"bin".into()).unwrap());
+
+        let dm = DirectMatch::from_str(r#".data.field contains 'é'"#).unwrap();
+        assert!(dm.match_value(&"café crème".into()).unwrap());
+    }
+
+    #[test]
+    fn test_icontains_is_ascii_case_insensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path icontains 'bin/Ba'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(dm.match_value(&"/USR/BIN/BASH".into()).unwrap());
+        assert!(dm.match_value(&"BIN/ba".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/zsh".into()).unwrap());
+        assert!(!dm.match_value(&"bin".into()).unwrap());
+
+        // non-ASCII letters are not folded
+        let dm = DirectMatch::from_str(r#".data.field icontains 'É'"#).unwrap();
+        assert!(dm.match_value(&"CAFÉ".into()).unwrap());
+        assert!(!dm.match_value(&"café".into()).unwrap());
+    }
+
+    #[test]
+    fn test_contains_quoted_number_and_hex_are_text() {
+        for op in ["contains", "icontains"] {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '123'")).unwrap();
+            assert!(dm.match_value(&"a123b".into()).unwrap());
+            assert!(!dm.match_value(&"a12b".into()).unwrap());
+
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '0x40'")).unwrap();
+            assert!(dm.match_value(&"flags=0x40".into()).unwrap());
+            assert!(!dm.match_value(&"64".into()).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_contains_vector_field() {
+        for op in ["contains", "icontains"] {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} 'bash'")).unwrap();
+            let field = FieldValue::Vector(vec!["sh".into(), "/bin/bash".into()]);
+            assert!(dm.match_value(&field).unwrap());
+            let field = FieldValue::Vector(vec!["sh".into(), "zsh".into()]);
+            assert!(!dm.match_value(&field).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_contains_non_string_field_is_error() {
+        for op in ["contains", "icontains"] {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '42'")).unwrap();
+            assert!(dm.match_value(&42.into()).is_err());
+            assert!(dm.match_value(&FieldValue::Bool(true)).is_err());
+            assert!(dm.match_value(&FieldValue::None).is_err());
+        }
+    }
+
+    fn direct_match_cost(rule: &str) -> u8 {
+        Match::from(DirectMatch::from_str(rule).unwrap()).cost()
+    }
+
+    #[test]
+    fn test_contains_cost_between_equality_and_regex() {
+        let equality_cost = direct_match_cost(".data.field == 'x'");
+        let regex_cost = direct_match_cost(".data.field matches 'x'");
+        for op in ["contains", "icontains"] {
+            let contains_cost = direct_match_cost(&format!(".data.field {op} 'x'"));
+            assert!(equality_cost < contains_cost, "{op} must cost more than ==");
+            assert!(
+                contains_cost < regex_cost,
+                "{op} must cost less than matches"
+            );
+        }
     }
 
     #[test]

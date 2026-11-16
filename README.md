@@ -144,6 +144,7 @@ severity: 10
 - Flag test (`&=` operator)
 - Comparison operators (`==`, `<`, `<=`, `>`, `>=`)
 - Case-insensitive string equality (`iequals` operator, ASCII letters only)
+- Substring search (`contains` operator, `icontains` for ASCII case-insensitive)
 
 ### Advanced Capabilities
 - **Rule Dependencies**: Chain rules together for complex detection logic
