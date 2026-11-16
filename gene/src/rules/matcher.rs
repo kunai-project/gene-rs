@@ -811,6 +811,67 @@ mod test {
     }
 
     #[test]
+    fn test_iequals_accepted_values() {
+        assert_parses(
+            "iequals",
+            &["'text'", "\"text\"", "''", "'123'", "\"123\"", "'0x40'"],
+        );
+        assert_rejects(
+            "iequals",
+            &["none", "some", "true", "false", "42", "0x40", "text"],
+        );
+    }
+
+    #[test]
+    fn test_iequals_is_ascii_case_insensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path iequals '/usr/bin/Bash'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(dm.match_value(&"/USR/BIN/BASH".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bash.sh".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bas".into()).unwrap());
+
+        // non-ASCII letters are not folded
+        let dm = DirectMatch::from_str(r#".data.field iequals 'É'"#).unwrap();
+        assert!(dm.match_value(&"É".into()).unwrap());
+        assert!(!dm.match_value(&"é".into()).unwrap());
+    }
+
+    #[test]
+    fn test_iequals_quoted_number_and_hex_are_text() {
+        let dm = DirectMatch::from_str(r#".data.field iequals '123'"#).unwrap();
+        assert!(dm.match_value(&"123".into()).unwrap());
+        assert!(!dm.match_value(&"0123".into()).unwrap());
+
+        let dm = DirectMatch::from_str(r#".data.field iequals '0xDEAD'"#).unwrap();
+        assert!(dm.match_value(&"0xdead".into()).unwrap());
+        assert!(!dm.match_value(&"57005".into()).unwrap());
+    }
+
+    #[test]
+    fn test_iequals_empty_value_matches_empty_field() {
+        let dm = DirectMatch::from_str(r#".data.field iequals ''"#).unwrap();
+        assert!(dm.match_value(&"".into()).unwrap());
+        assert!(!dm.match_value(&"a".into()).unwrap());
+    }
+
+    #[test]
+    fn test_iequals_vector_field() {
+        let dm = DirectMatch::from_str(r#".data.field iequals 'bash'"#).unwrap();
+        let field = FieldValue::Vector(vec!["sh".into(), "BASH".into()]);
+        assert!(dm.match_value(&field).unwrap());
+        let field = FieldValue::Vector(vec!["sh".into(), "zsh".into()]);
+        assert!(!dm.match_value(&field).unwrap());
+    }
+
+    #[test]
+    fn test_iequals_non_string_field_is_error() {
+        let dm = DirectMatch::from_str(r#".data.field iequals '42'"#).unwrap();
+        assert!(dm.match_value(&42.into()).is_err());
+        assert!(dm.match_value(&FieldValue::Bool(true)).is_err());
+        assert!(dm.match_value(&FieldValue::None).is_err());
+    }
+
+    #[test]
     fn test_indirect_match() {
         let im = IndirectMatch::from_str(r#".data.exe.size == @.data."field with space""#)
             .map_err(|e| {
