@@ -30,11 +30,12 @@ gte  = { ">=" }
 rex  = { "~=" | "matches" }
 irex = { "imatches" }
 flag = { "&=" }
+ieq  = { "iequals" }
 
 _op_value = _{
     eq ~ eq_value
   | (lte | lt | gte | gt | flag) ~ numeric_value
-  | (rex | irex) ~ string_value
+  | (rex | irex | ieq) ~ string_value
 }
 
 _direct_match = _{ SOI ~ "\""? ~ field_path ~ "\""? ~ _op_value ~ EOI }
