@@ -7,7 +7,7 @@ value_dq   = @{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
 value_sq   = @{ "'" ~ (!("'") ~ ANY)* ~ "'" }
 _number    = _{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 number     = @{ _number | ("'" ~ _number ~ "'") | ("\"" ~ _number ~ "\"") }
-_hex       = _{ "0x"? ~ ASCII_HEX_DIGIT+ }
+_hex       = _{ "0x" ~ ASCII_HEX_DIGIT+ }
 hex        = @{ _hex | ("'" ~ _hex ~ "'") | ("\"" ~ _hex ~ "\"") }
 none       = @{ "none" }
 some       = @{ "some" }
@@ -15,10 +15,13 @@ option     = _{ none | some }
 bool_true  = @{ "true" }
 bool_false = @{ "false" }
 bool       = _{ bool_false | bool_true }
-value      =  { (option | bool | hex | number | value_dq | value_sq) }
+
+// values accepted by each operator group
+eq_value      = { option | bool | hex | number | value_dq | value_sq }
+numeric_value = { hex | number }
+string_value  = { value_dq | value_sq }
 
 // the order in which operators are evaluated is important
-op   = { eq | lte | lt | gte | gt | rex | irex | flag }
 eq   = { "==" | "is" }
 lt   = { "<" }
 lte  = { "<=" }
@@ -28,7 +31,13 @@ rex  = { "~=" | "matches" }
 irex = { "imatches" }
 flag = { "&=" }
 
-_direct_match = _{ SOI ~ "\""? ~ field_path ~ "\""? ~ op ~ value ~ EOI }
+_op_value = _{
+    eq ~ eq_value
+  | (lte | lt | gte | gt | flag) ~ numeric_value
+  | (rex | irex) ~ string_value
+}
+
+_direct_match = _{ SOI ~ "\""? ~ field_path ~ "\""? ~ _op_value ~ EOI }
 direct_match  =  { _direct_match }
 
 // indirect match

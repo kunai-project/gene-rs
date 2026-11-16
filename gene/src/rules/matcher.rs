@@ -334,10 +334,6 @@ enum Op {
 
 impl Op {
     fn from_pair(pair: Pair<'_, Rule>) -> Self {
-        debug_assert_eq!(pair.as_rule(), Rule::op);
-        // cannot panic op must have an inner pair
-        let pair = pair.into_inner().next().unwrap();
-
         match pair.as_rule() {
             Rule::eq => Op::Eq,
             Rule::lte => Op::Lte,
@@ -364,7 +360,10 @@ pub(crate) struct DirectMatch {
 
 impl MatchValue {
     fn from_pair(op: Op, pair: Pair<'_, Rule>) -> Result<Self, ParseError> {
-        debug_assert_eq!(pair.as_rule(), Rule::value);
+        debug_assert!(matches!(
+            pair.as_rule(),
+            Rule::eq_value | Rule::numeric_value | Rule::string_value
+        ));
 
         // this cannot panic as value must have at least one inner pair
         let inner_pair = pair.into_inner().next().unwrap();
@@ -395,15 +394,12 @@ impl MatchValue {
             },
             Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Flag => {
                 let num_str = inner_pair.as_str().trim_matches('\'').trim_matches('"');
-                match inner_pair.as_rule() {
-                    Rule::number | Rule::hex => match MatchValue::value_number(num_str)? {
-                        // we cannot &= on float
-                        MatchValue::Number(Number::Float(_)) if matches!(op, Op::Flag) => {
-                            Err(ParseError::new("value must be an integer", span))
-                        }
-                        v => Ok(v),
-                    },
-                    _ => Err(ParseError::new("value must be a number", span)),
+                match MatchValue::value_number(num_str)? {
+                    // we cannot &= on float
+                    MatchValue::Number(Number::Float(_)) if matches!(op, Op::Flag) => {
+                        Err(ParseError::new("value must be an integer", span))
+                    }
+                    v => Ok(v),
                 }
             }
             Op::Rex | Op::IRex => {
@@ -417,7 +413,8 @@ impl MatchValue {
                         inner_pair.as_str().trim_matches('\''),
                         is_case_insensitive,
                     ),
-                    _ => Err(ParseError::new("value must be a quoted string", span)),
+                    // the grammar only allows quoted strings
+                    _ => unreachable!(),
                 }
             }
         }
@@ -438,13 +435,12 @@ impl FromStr for DirectMatch {
                 Rule::field_path => {
                     field_path = Some(XPath::parse(pair.as_str())?);
                 }
-                Rule::op => op = Some(Op::from_pair(pair)),
-                Rule::value => value = Some(MatchValue::from_pair(op.unwrap(), pair)?),
-                Rule::EOI => {}
-                // cannot be anything else
-                _ => {
-                    unreachable!()
+                Rule::eq_value | Rule::numeric_value | Rule::string_value => {
+                    value = Some(MatchValue::from_pair(op.unwrap(), pair)?)
                 }
+                Rule::EOI => {}
+                // the grammar only leaves operators
+                _ => op = Some(Op::from_pair(pair)),
             }
         }
 
