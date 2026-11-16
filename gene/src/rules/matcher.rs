@@ -335,6 +335,10 @@ enum Op {
     IEq,
     Contains,
     IContains,
+    StartsWith,
+    IStartsWith,
+    EndsWith,
+    IEndsWith,
 }
 
 impl Op {
@@ -351,6 +355,10 @@ impl Op {
             Rule::ieq => Op::IEq,
             Rule::contains => Op::Contains,
             Rule::icontains => Op::IContains,
+            Rule::startswith => Op::StartsWith,
+            Rule::istartswith => Op::IStartsWith,
+            Rule::endswith => Op::EndsWith,
+            Rule::iendswith => Op::IEndsWith,
             // cannot be something else
             _ => unreachable!(),
         }
@@ -425,7 +433,13 @@ impl MatchValue {
                     _ => unreachable!(),
                 }
             }
-            Op::IEq | Op::Contains | Op::IContains => {
+            Op::IEq
+            | Op::Contains
+            | Op::IContains
+            | Op::StartsWith
+            | Op::IStartsWith
+            | Op::EndsWith
+            | Op::IEndsWith => {
                 let value = match inner_pair.as_rule() {
                     Rule::value_dq => inner_pair.as_str().trim_matches('"'),
                     Rule::value_sq => inner_pair.as_str().trim_matches('\''),
@@ -435,6 +449,20 @@ impl MatchValue {
                 // an empty search value would match any string
                 if value.is_empty() && !matches!(op, Op::IEq) {
                     return Err(ParseError::new("value must not be empty", span));
+                }
+                // these operators fold ASCII only, a non-ASCII cased letter would silently stay case-sensitive
+                let is_ascii_folding = matches!(
+                    op,
+                    Op::IEq | Op::IContains | Op::IStartsWith | Op::IEndsWith
+                );
+                let has_non_ascii_cased_letter = value
+                    .chars()
+                    .any(|c| !c.is_ascii() && (c.is_uppercase() || c.is_lowercase()));
+                if is_ascii_folding && has_non_ascii_cased_letter {
+                    return Err(ParseError::new(
+                        "value must not contain non-ASCII cased letters, use imatches instead",
+                        span,
+                    ));
                 }
                 Ok(MatchValue::String(value.into()))
             }
@@ -611,6 +639,38 @@ impl DirectMatch {
                     Ok(o.as_bytes()
                         .windows(v.len())
                         .any(|window| window.eq_ignore_ascii_case(v.as_bytes())))
+                } else {
+                    Err(())
+                }
+            }
+            Op::StartsWith => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    Ok(o.starts_with(v.as_str()))
+                } else {
+                    Err(())
+                }
+            }
+            Op::IStartsWith => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    // bytes, not str: slicing a str inside a multi-byte character panics
+                    Ok(o.len() >= v.len()
+                        && o.as_bytes()[..v.len()].eq_ignore_ascii_case(v.as_bytes()))
+                } else {
+                    Err(())
+                }
+            }
+            Op::EndsWith => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    Ok(o.ends_with(v.as_str()))
+                } else {
+                    Err(())
+                }
+            }
+            Op::IEndsWith => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    // bytes, not str: slicing a str inside a multi-byte character panics
+                    Ok(o.len() >= v.len()
+                        && o.as_bytes()[o.len() - v.len()..].eq_ignore_ascii_case(v.as_bytes()))
                 } else {
                     Err(())
                 }
@@ -874,11 +934,6 @@ mod test {
         assert!(dm.match_value(&"/USR/BIN/BASH".into()).unwrap());
         assert!(!dm.match_value(&"/usr/bin/bash.sh".into()).unwrap());
         assert!(!dm.match_value(&"/usr/bin/bas".into()).unwrap());
-
-        // non-ASCII letters are not folded
-        let dm = DirectMatch::from_str(r#".data.field iequals 'É'"#).unwrap();
-        assert!(dm.match_value(&"É".into()).unwrap());
-        assert!(!dm.match_value(&"é".into()).unwrap());
     }
 
     #[test]
@@ -950,11 +1005,6 @@ mod test {
         assert!(dm.match_value(&"BIN/ba".into()).unwrap());
         assert!(!dm.match_value(&"/usr/bin/zsh".into()).unwrap());
         assert!(!dm.match_value(&"bin".into()).unwrap());
-
-        // non-ASCII letters are not folded
-        let dm = DirectMatch::from_str(r#".data.field icontains 'É'"#).unwrap();
-        assert!(dm.match_value(&"CAFÉ".into()).unwrap());
-        assert!(!dm.match_value(&"café".into()).unwrap());
     }
 
     #[test]
@@ -984,6 +1034,158 @@ mod test {
     #[test]
     fn test_contains_non_string_field_is_error() {
         for op in ["contains", "icontains"] {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '42'")).unwrap();
+            assert!(dm.match_value(&42.into()).is_err());
+            assert!(dm.match_value(&FieldValue::Bool(true)).is_err());
+            assert!(dm.match_value(&FieldValue::None).is_err());
+        }
+    }
+
+    const PREFIX_SUFFIX_OPS: [&str; 4] = ["startswith", "istartswith", "endswith", "iendswith"];
+
+    #[test]
+    fn test_startswith_endswith_accepted_values() {
+        for op in PREFIX_SUFFIX_OPS {
+            assert_parses(op, &["'text'", "\"text\"", "'123'", "\"123\"", "'0x40'"]);
+            // an empty value would always match
+            assert_rejects(
+                op,
+                &[
+                    "none", "some", "true", "false", "42", "0x40", "text", "''", "\"\"",
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn test_istartswith_is_not_read_as_is_operator() {
+        let dm = DirectMatch::from_str(r#".data.field istartswith 'x'"#).unwrap();
+        assert!(dm.match_value(&"Xyz".into()).unwrap());
+    }
+
+    #[test]
+    fn test_startswith_is_case_sensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path startswith '/usr/Bin'"#).unwrap();
+        assert!(dm.match_value(&"/usr/Bin/bash".into()).unwrap());
+        assert!(dm.match_value(&"/usr/Bin".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(!dm.match_value(&"/bin/usr/Bin".into()).unwrap());
+        assert!(!dm.match_value(&"/usr".into()).unwrap());
+
+        let dm = DirectMatch::from_str(r#".data.field startswith 'é'"#).unwrap();
+        assert!(dm.match_value(&"été".into()).unwrap());
+    }
+
+    #[test]
+    fn test_istartswith_is_ascii_case_insensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path istartswith '/usr/Bin'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(dm.match_value(&"/USR/BIN/BASH".into()).unwrap());
+        assert!(dm.match_value(&"/USR/bin".into()).unwrap());
+        assert!(!dm.match_value(&"/bin/usr/bin".into()).unwrap());
+        assert!(!dm.match_value(&"/usr".into()).unwrap());
+
+        // the pattern length falls inside a multi-byte character of the field
+        let dm = DirectMatch::from_str(r#".data.field istartswith '™'"#).unwrap();
+        assert!(!dm.match_value(&"a™".into()).unwrap());
+    }
+
+    #[test]
+    fn test_endswith_is_case_sensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path endswith '/Bash'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/Bash".into()).unwrap());
+        assert!(dm.match_value(&"/Bash".into()).unwrap());
+        assert!(!dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(!dm.match_value(&"/Bash/usr".into()).unwrap());
+        assert!(!dm.match_value(&"Bash".into()).unwrap());
+
+        let dm: DirectMatch = DirectMatch::from_str(r#".data.field endswith 'é'"#).unwrap();
+        assert!(dm.match_value(&"café".into()).unwrap());
+    }
+
+    #[test]
+    fn test_iendswith_is_ascii_case_insensitive() {
+        let dm = DirectMatch::from_str(r#".data.exe.path iendswith '/Bash'"#).unwrap();
+        assert!(dm.match_value(&"/usr/bin/bash".into()).unwrap());
+        assert!(dm.match_value(&"/USR/BIN/BASH".into()).unwrap());
+        assert!(dm.match_value(&"/BASH".into()).unwrap());
+        assert!(!dm.match_value(&"/bash/usr".into()).unwrap());
+        assert!(!dm.match_value(&"bash".into()).unwrap());
+
+        // the pattern length falls inside a multi-byte character of the field
+        let dm = DirectMatch::from_str(r#".data.field iendswith 'a'"#).unwrap();
+        assert!(!dm.match_value(&"aé".into()).unwrap());
+    }
+
+    const ASCII_FOLDING_OPS: [&str; 4] = ["iequals", "icontains", "istartswith", "iendswith"];
+
+    #[test]
+    fn test_ascii_folding_ops_reject_non_ascii_cased_letters() {
+        for op in ASCII_FOLDING_OPS {
+            assert_rejects(op, &["'É'", "\"é\"", "'café'", "'Straße'", "'Ω'"]);
+            // uncased non-ASCII characters have nothing to fold
+            assert_parses(op, &["'™'", "'日本'", "'😀'", "'a™'"]);
+        }
+    }
+
+    #[test]
+    fn test_non_ascii_cased_letter_error_points_to_imatches() {
+        for op in ASCII_FOLDING_OPS {
+            let error = DirectMatch::from_str(&format!(".data.field {op} 'É'")).unwrap_err();
+            assert!(error.to_string().contains("imatches"), "{op}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_case_sensitive_ops_accept_non_ascii_cased_letters() {
+        for op in [
+            "==",
+            "contains",
+            "startswith",
+            "endswith",
+            "matches",
+            "imatches",
+        ] {
+            assert_parses(op, &["'É'", "'café'"]);
+        }
+    }
+
+    #[test]
+    fn test_startswith_endswith_quoted_number_and_hex_are_text() {
+        for op in ["startswith", "istartswith"] {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '123'")).unwrap();
+            assert!(dm.match_value(&"123b".into()).unwrap());
+            assert!(!dm.match_value(&"0123".into()).unwrap());
+
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '0x40'")).unwrap();
+            assert!(dm.match_value(&"0x40=flags".into()).unwrap());
+            assert!(!dm.match_value(&"64".into()).unwrap());
+        }
+        for op in ["endswith", "iendswith"] {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '123'")).unwrap();
+            assert!(dm.match_value(&"a123".into()).unwrap());
+            assert!(!dm.match_value(&"1230".into()).unwrap());
+
+            let dm = DirectMatch::from_str(&format!(".data.field {op} '0x40'")).unwrap();
+            assert!(dm.match_value(&"flags=0x40".into()).unwrap());
+            assert!(!dm.match_value(&"64".into()).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_startswith_endswith_vector_field() {
+        for op in PREFIX_SUFFIX_OPS {
+            let dm = DirectMatch::from_str(&format!(".data.field {op} 'bash'")).unwrap();
+            let field = FieldValue::Vector(vec!["sh".into(), "bash".into()]);
+            assert!(dm.match_value(&field).unwrap());
+            let field = FieldValue::Vector(vec!["sh".into(), "zsh".into()]);
+            assert!(!dm.match_value(&field).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_startswith_endswith_non_string_field_is_error() {
+        for op in PREFIX_SUFFIX_OPS {
             let dm = DirectMatch::from_str(&format!(".data.field {op} '42'")).unwrap();
             assert!(dm.match_value(&42.into()).is_err());
             assert!(dm.match_value(&FieldValue::Bool(true)).is_err());
