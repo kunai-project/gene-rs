@@ -746,6 +746,74 @@ mod test {
         assert!(DirectMatch::from_str(r#".data.exe.path imatches 42"#).is_err());
     }
 
+    fn assert_parses(op: &str, values: &[&str]) {
+        for value in values {
+            let rule = format!(".data.field {op} {value}");
+            assert!(DirectMatch::from_str(&rule).is_ok(), "{rule} must parse");
+        }
+    }
+
+    fn assert_rejects(op: &str, values: &[&str]) {
+        for value in values {
+            let rule = format!(".data.field {op} {value}");
+            assert!(
+                DirectMatch::from_str(&rule).is_err(),
+                "{rule} must not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn test_eq_accepted_values() {
+        for op in ["==", "is"] {
+            assert_parses(
+                op,
+                &[
+                    "none", "some", "true", "false", "42", "'42'", "\"42\"", "4.2", "0x40",
+                    "'0x40'", "'dead'", "'text'", "\"text\"", "''",
+                ],
+            );
+            assert_rejects(op, &["text"]);
+        }
+    }
+
+    #[test]
+    fn test_comparison_accepted_values() {
+        for op in ["<", "<=", ">", ">="] {
+            assert_parses(op, &["42", "'42'", "\"42\"", "4.2", "0x40", "'0x40'"]);
+            assert_rejects(
+                op,
+                &["none", "some", "true", "false", "'text'", "\"text\"", "''"],
+            );
+        }
+    }
+
+    #[test]
+    fn test_flag_accepted_values() {
+        assert_parses("&=", &["64", "'64'", "0x40", "'0x40'"]);
+        assert_rejects("&=", &["4.2", "none", "some", "true", "false", "'text'"]);
+    }
+
+    #[test]
+    fn test_regex_accepted_values() {
+        for op in ["~=", "matches", "imatches"] {
+            assert_parses(
+                op,
+                &["'text'", "\"text\"", "''", "'123'", "\"123\"", "'dead'"],
+            );
+            assert_rejects(op, &["none", "some", "true", "false", "42", "0x40", "dead"]);
+        }
+    }
+
+    #[test]
+    fn test_regex_quoted_number_and_hex_are_text() {
+        let dm = DirectMatch::from_str(r#".data.field matches '123'"#).unwrap();
+        assert!(dm.match_value(&"a123b".into()).unwrap());
+
+        let dm = DirectMatch::from_str(r#".data.field imatches 'dead'"#).unwrap();
+        assert!(dm.match_value(&"0xDEADBEEF".into()).unwrap());
+    }
+
     #[test]
     fn test_indirect_match() {
         let im = IndirectMatch::from_str(r#".data.exe.size == @.data."field with space""#)
