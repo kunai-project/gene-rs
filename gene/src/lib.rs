@@ -142,6 +142,7 @@
 //! - Regular expression support (`~=` or `matches` operator, `imatches` for case-insensitive)
 //! - Flag test (`&=` operator)
 //! - Comparison operators (`==`, `<`, `<=`, `>`, `>=`)
+//! - Case-insensitive string equality (`iequals` operator, ASCII letters only)
 //!
 //! ### Advanced Capabilities
 //! - **Rule Dependencies**: Chain rules together for complex detection logic

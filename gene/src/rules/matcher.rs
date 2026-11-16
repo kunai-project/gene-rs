@@ -330,6 +330,7 @@ enum Op {
     Rex,
     IRex,
     Flag,
+    IEq,
 }
 
 impl Op {
@@ -343,6 +344,7 @@ impl Op {
             Rule::rex => Op::Rex,
             Rule::irex => Op::IRex,
             Rule::flag => Op::Flag,
+            Rule::ieq => Op::IEq,
             // cannot be something else
             _ => unreachable!(),
         }
@@ -417,6 +419,16 @@ impl MatchValue {
                     _ => unreachable!(),
                 }
             }
+            Op::IEq => match inner_pair.as_rule() {
+                Rule::value_dq => Ok(MatchValue::String(
+                    inner_pair.as_str().trim_matches('"').into(),
+                )),
+                Rule::value_sq => Ok(MatchValue::String(
+                    inner_pair.as_str().trim_matches('\'').into(),
+                )),
+                // the grammar only allows quoted strings
+                _ => unreachable!(),
+            },
         }
     }
 }
@@ -566,6 +578,13 @@ impl DirectMatch {
             Op::Rex | Op::IRex => {
                 if let (MatchValue::Regex(v), FieldValue::String(o)) = (&self.value, &fv) {
                     Ok(v.is_match(o))
+                } else {
+                    Err(())
+                }
+            }
+            Op::IEq => {
+                if let (MatchValue::String(v), FieldValue::String(o)) = (&self.value, &fv) {
+                    Ok(o.eq_ignore_ascii_case(v))
                 } else {
                     Err(())
                 }
