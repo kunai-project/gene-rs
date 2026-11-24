@@ -2,6 +2,8 @@
 //!
 //! [`escape_invalid_utf8`] keeps valid UTF-8 as is and writes each invalid
 //! byte as `\xNN`; [`unescape_invalid_utf8`] restores the exact bytes.
+//! [`escape_invalid_utf8_or_byte`] also writes a chosen byte as `\xNN`,
+//! valid or not.
 //!
 //! These formats are part of gene's rule language: a rule matching `\xff`
 //! must match the same bytes in every program using gene. Any change to a
@@ -94,12 +96,47 @@ pub fn escape_invalid_utf8(bytes: &[u8]) -> Cow<'_, str> {
         out.reserve(bytes.len());
         push_valid(&mut out, valid, !chunk.invalid().is_empty());
         for byte in chunk.invalid() {
-            out.push_str("\\x");
-            out.push(low_nibble_to_hex(byte >> 4));
-            out.push(low_nibble_to_hex(*byte));
+            push_byte_escape(&mut out, *byte);
         }
     }
     Cow::Owned(out)
+}
+
+/// Converts bytes like [`escape_invalid_utf8`], but also writes every `byte`
+/// as `\xNN`, even when it is valid UTF-8 (e.g. `.` as `\x2e`), so the text
+/// never contains it and it can be used as a separator.
+pub fn escape_invalid_utf8_or_byte(bytes: &[u8], byte: u8) -> Cow<'_, str> {
+    let mut out = String::new();
+    let mut rest = bytes;
+    while let Some(position) = rest.iter().position(|&b| b == byte) {
+        out.reserve(rest.len());
+        push_escaped(&mut out, &rest[..position], true);
+        push_byte_escape(&mut out, byte);
+        rest = &rest[position + 1..];
+    }
+    if out.is_empty() {
+        return escape_invalid_utf8(bytes);
+    }
+    push_escaped(&mut out, rest, false);
+    Cow::Owned(out)
+}
+
+/// Pushes `bytes` as [`escape_invalid_utf8`] writes them;
+/// `is_before_byte_escape` tells that the caller pushes `\xNN` right after.
+fn push_escaped(out: &mut String, bytes: &[u8], is_before_byte_escape: bool) {
+    for chunk in bytes.utf8_chunks() {
+        let has_invalid = !chunk.invalid().is_empty();
+        push_valid(out, chunk.valid(), has_invalid || is_before_byte_escape);
+        for byte in chunk.invalid() {
+            push_byte_escape(out, *byte);
+        }
+    }
+}
+
+fn push_byte_escape(out: &mut String, byte: u8) {
+    out.push_str("\\x");
+    out.push(low_nibble_to_hex(byte >> 4));
+    out.push(low_nibble_to_hex(byte));
 }
 
 /// Converts text written by [`escape_invalid_utf8`] back to the original
@@ -201,6 +238,60 @@ mod tests {
     #[test]
     fn test_escaped_byte_and_its_literal_text_differ() {
         assert_ne!(escape_invalid_utf8(br"\xff"), escape_invalid_utf8(b"\xff"));
+    }
+
+    #[test]
+    fn test_escape_invalid_utf8_or_byte_without_byte_is_borrowed() {
+        assert!(matches!(
+            escape_invalid_utf8_or_byte(b"abc", b'.'),
+            Cow::Borrowed("abc")
+        ));
+    }
+
+    #[test]
+    fn test_escape_invalid_utf8_or_byte_escapes_valid_byte() {
+        assert_eq!(escape_invalid_utf8_or_byte(b"a.b.", b'.'), r"a\x2eb\x2e");
+    }
+
+    #[test]
+    fn test_escape_invalid_utf8_or_byte_keeps_escaping_invalid_bytes() {
+        assert_eq!(
+            escape_invalid_utf8_or_byte(b"\xff.\xfe", b'.'),
+            r"\xff\x2e\xfe"
+        );
+    }
+
+    #[test]
+    fn test_escape_invalid_utf8_or_byte_inside_valid_multi_byte_char() {
+        // `é` is c3 a9, so a9 alone leaves c3 invalid
+        assert_eq!(
+            escape_invalid_utf8_or_byte("é".as_bytes(), 0xa9),
+            r"\xc3\xa9"
+        );
+    }
+
+    #[test]
+    fn test_escape_invalid_utf8_or_byte_doubles_backslashes_before_it() {
+        assert_eq!(escape_invalid_utf8_or_byte(b"a\\.", b'.'), r"a\\\x2e");
+        assert_eq!(escape_invalid_utf8_or_byte(br"\x2e.", b'.'), r"\\x2e\x2e");
+    }
+
+    #[test]
+    fn test_escape_invalid_utf8_or_byte_round_trip() {
+        let inputs: &[&[u8]] = &[
+            b"",
+            b".",
+            b"a.b",
+            b"a\\.b",
+            b"a\\\\.\\",
+            br"\x2e.",
+            b"\xff.\xff",
+            "é.é".as_bytes(),
+        ];
+        for input in inputs {
+            let text = escape_invalid_utf8_or_byte(input, b'.');
+            assert_eq!(&*unescape_invalid_utf8(&text), *input, "input: {input:?}");
+        }
     }
 
     #[test]
